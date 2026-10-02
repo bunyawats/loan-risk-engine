@@ -10,7 +10,7 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 Phases A and B are implemented in this repo and green under `cargo test`: the v1 parity service, features, the Jev client, rules v2, and the audit log. `IMPLEMENTATION_PLAN.md` tracks what is ticked and what is waiting on the live E2E in the POC stack.
 
-The POC stack runs this service on rules v1 (POC commit `db810b7`), and the live E2E passed with v1. Not done yet: the Jev answer format is unconfirmed against the real API (B2), so v2 with Jev has not been run live (second half of C3).
+This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"), on rules v1, and the live E2E passed with v1. Not done yet: the Jev answer format is unconfirmed against the real API (B2), so v2 with Jev has not been run live (second half of C3).
 
 `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, and `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`).
 
@@ -131,7 +131,8 @@ cargo test features::                      # unit tests of one module
 cargo test <name> -- --exact --nocapture   # a single test, with its output
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
 docker build -t loan-risk-engine .
-docker compose up                          # this service + a stub KrakenD/decisions sink for local dev
+docker compose up -d --build               # standalone container on host port 18000, wired to the POC's KrakenD
+KRAKEND_URL=http://krakend:8080 docker compose --profile stub up --build   # no POC: use the stub decisions sink
 
 # smoke test
 curl -s -XPOST localhost:8000/assess -H 'content-type: application/json' -d '{
@@ -166,11 +167,16 @@ Every new variable goes into `.env.example` and this table in the same commit.
 
 ## Integration with loan-onboarding-poc
 
-The POC consumes this service as a container. The only POC-side changes are:
+This service runs as its **own standalone container**, started from this repo's `docker-compose.yml`. It is not a service in the POC's compose file, and the two stacks share no Docker network. They reach each other through published host ports:
 
-1. **docker-compose.yml** (POC): add a `risk-engine` service. Use either `build: <path to this repo>` (local dev) or `image: ghcr.io/bunyawats/loan-risk-engine:<tag>` (published). The build path is relative to the POC's compose file: `../loan-risk-engine` for a sibling checkout, `../../Rust/loan-risk-engine` for the author's layout (`Projects/Python/loan-onboarding-poc` and `Projects/Rust/loan-risk-engine`). Move `mock-risk-engine` behind `profiles: ["mock"]` for rollback.
-2. **krakend/krakend.json** (POC): change the `/assess` backend host from `http://mock-risk-engine:8000` to `http://risk-engine:8000`.
-3. **Rollback:** revert that one KrakenD line and start the `mock` profile.
+| direction | URL | where it is set |
+|---|---|---|
+| POC KrakenD → this service | `http://host.docker.internal:18000/assess` | POC `krakend/krakend.json`, `/assess` backend host |
+| this service → POC KrakenD | `http://host.docker.internal:8090/decisions` | `KRAKEND_URL` default in this repo's `docker-compose.yml` |
+
+- Start it with `docker compose up -d --build` here; the POC stack is started separately. Host port 18000 (`RISK_ENGINE_HOST_PORT`) is used because the POC publishes Mayan on 8000.
+- If this container is not running, `/assess` fails at KrakenD and applications wait in `PENDING_RISK_ASSESSMENT`.
+- The POC keeps `mock-risk-engine` behind `profiles: ["mock"]`. **Rollback:** set the `/assess` host in the POC's `krakend.json` back to `http://mock-risk-engine:8000`, run `docker compose --profile mock up -d` there, and restart `krakend`.
 
 Nothing in the POC's Python code, NATS adapter, Temporal workflow, or DB changes. If a task here seems to need a POC code change, it's a contract change. Flag it and stop.
 

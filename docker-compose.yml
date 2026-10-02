@@ -1,23 +1,35 @@
-# Local development only: this service plus a stand-in for KrakenD's /decisions route.
-# In the POC stack the service is wired in from the POC's own compose file.
+# Runs the risk engine as its own container, outside the loan-onboarding-poc stack.
+#
+# Default: connect to a POC stack running on the same Docker host. The two stacks do
+# not share a network; they reach each other through published host ports:
+#   POC KrakenD  -> http://host.docker.internal:18000/assess     (this service)
+#   this service -> http://host.docker.internal:8090/decisions   (the POC's KrakenD)
+#
+#   docker compose up -d --build
+#
+# Without the POC, use the stub sink in place of KrakenD:
+#
+#   KRAKEND_URL=http://krakend:8080 docker compose --profile stub up --build
 services:
   risk-engine:
     build: .
     ports:
-      # Override when 8000 is taken (the POC publishes Mayan there).
-      - "${RISK_ENGINE_HOST_PORT:-8000}:8000"
+      - "${RISK_ENGINE_HOST_PORT:-18000}:8000"
     environment:
-      KRAKEND_URL: http://krakend:8080
+      KRAKEND_URL: ${KRAKEND_URL:-http://host.docker.internal:8090}
       RULES_VERSION: ${RULES_VERSION:-v1}
       JEV_ENABLED: ${JEV_ENABLED:-false}
       TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
       RUST_LOG: ${RUST_LOG:-info}
-    depends_on:
-      - krakend
+    extra_hosts:
+      # Docker Desktop provides this name already; this line makes it work on Linux too.
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
 
   # Stub decisions sink: answers 200 to anything and prints each request (with its
-  # body) to its log, so `docker compose logs krakend` shows what was decided.
+  # body) to its log, so `docker compose --profile stub logs krakend` shows what was decided.
   krakend:
+    profiles: ["stub"]
     image: mendhak/http-https-echo:37
     environment:
       HTTP_PORT: "8080"

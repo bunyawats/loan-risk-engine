@@ -18,20 +18,27 @@ set -a; source .env; set +a
 cargo run                      # listens on :8000
 ```
 
-Or with a stub decisions sink standing in for KrakenD:
+As a standalone container next to a running loan-onboarding-poc stack (the POC's KrakenD calls it on host port 18000; it calls the POC's KrakenD on host port 8090):
 
 ```bash
-docker compose up --build        # RISK_ENGINE_HOST_PORT=18000 if 8000 is taken (the POC's Mayan uses it)
-docker compose logs -f krakend   # shows each /decisions body
+docker compose up -d --build
+curl -s localhost:18000/healthz
 ```
 
-Smoke test:
+Without the POC, with a stub decisions sink standing in for KrakenD:
 
 ```bash
-curl -i -XPOST localhost:8000/assess -H 'content-type: application/json' -d '{
+KRAKEND_URL=http://krakend:8080 docker compose --profile stub up --build
+docker compose --profile stub logs -f krakend   # shows each /decisions body
+```
+
+Smoke test (port 18000 for the container, 8000 under `cargo run`):
+
+```bash
+curl -i -XPOST localhost:18000/assess -H 'content-type: application/json' -d '{
   "application_id":"APP-1","applicant_identifier":"a@b.c","product_type":"personal_loan",
   "amount":"60000","payload":{"purpose":"home renovation","employment_status":"full-time","monthly_income":"8000"}}'
-curl -s localhost:8000/healthz
+curl -s localhost:18000/healthz
 ```
 
 `/assess` always answers `202` with an empty body, after posting `{"application_id", "risk_tier"}` to `{KRAKEND_URL}/decisions`.
