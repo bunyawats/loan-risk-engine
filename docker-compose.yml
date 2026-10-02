@@ -1,0 +1,22 @@
+# Local development only: this service plus a stand-in for KrakenD's /decisions route.
+# In the POC stack the service is wired in from the POC's own compose file.
+services:
+  risk-engine:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      KRAKEND_URL: http://krakend:8080
+      RULES_VERSION: ${RULES_VERSION:-v1}
+      JEV_ENABLED: ${JEV_ENABLED:-false}
+      TYPESAFE_API_KEY: ${TYPESAFE_API_KEY:-}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      - krakend
+
+  # Stub decisions sink: answers 200 to anything and prints each request (with its
+  # body) to its log, so `docker compose logs krakend` shows what was decided.
+  krakend:
+    image: mendhak/http-https-echo:37
+    environment:
+      HTTP_PORT: "8080"
