@@ -10,7 +10,7 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 Phases A and B are implemented in this repo and green under `cargo test`: the v1 parity service, features, the Jev client, rules v2, and the audit log. `IMPLEMENTATION_PLAN.md` tracks what is ticked and what is waiting on the live E2E in the POC stack.
 
-Not done yet: the Jev answer format is unconfirmed against the real API (B2), nothing in the POC has been changed (C2), and no live E2E has run (C3).
+The POC stack runs this service on rules v1 (POC commit `db810b7`), and the live E2E passed with v1. Not done yet: the Jev answer format is unconfirmed against the real API (B2), so v2 with Jev has not been run live (second half of C3).
 
 `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, and `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`).
 

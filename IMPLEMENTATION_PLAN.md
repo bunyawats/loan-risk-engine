@@ -6,20 +6,20 @@ E2E check in the POC stack; until then they carry a dated status note instead.
 
 ## Current Status
 
-**Next task:** the real Jev call for B2 (O1), then C2 in the POC repo.
+**Next task:** the real Jev call for B2 (O1), then the v2 half of C3.
 
-Phases A and B are code-complete with tests green. Tasks that touch rules or integration stay unticked until the live E2E (C3) has run.
+Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev client are code-complete and tested with mocks, but not yet run live.
 
 ## Phase A — Skeleton + parity (no Jev)
 
 - [x] A1. Scaffold: deps, `lib.rs` + `main.rs`, config, tracing, `/healthz`, `.env.example`.
 - [x] A2. `model.rs`: typed request, `RiskTier` enum; invalid input → MEDIUM.
-- [ ] A3. `rules.rs`: ZEN loader with `spawn_blocking`; `rules/risk_tier.v1.json`.
-  - *2026-10-02: implemented, tests green; live E2E pending Phase C.*
-- [ ] A4. `webhook.rs` + `/assess` handler (blocking semantics, deadline).
-  - *2026-10-02: implemented, contract tests green, smoke-tested against a local sink; live E2E pending Phase C.*
-- [ ] A5. Parity and contract tests green. DoD: identical tiers to the mock for the full boundary table.
-  - *2026-10-02: `tests/parity.rs` and `tests/contract.rs` green; live E2E pending Phase C.*
+- [x] A3. `rules.rs`: ZEN loader with `spawn_blocking`; `rules/risk_tier.v1.json`.
+  - *2026-10-02: implemented, tests green; live E2E passed with v1 (C3).*
+- [x] A4. `webhook.rs` + `/assess` handler (blocking semantics, deadline).
+  - *2026-10-02: implemented, contract tests green, smoke-tested against a local sink; live E2E passed with v1 (C3).*
+- [x] A5. Parity and contract tests green. DoD: identical tiers to the mock for the full boundary table.
+  - *2026-10-02: `tests/parity.rs` and `tests/contract.rs` green; live E2E passed with v1 (C3).*
 
 ## Phase B — Features + Jev
 
@@ -34,8 +34,10 @@ Phases A and B are code-complete with tests green. Tasks that touch rules or int
 
 - [x] C1. Dockerfile and local `docker-compose.yml` with a stub decisions sink.
   - *2026-10-02: image builds (200MB, runs as uid 10001); compose smoke test passed for v1 and v2.*
-- [ ] C2. POC: compose service added, mock behind the `mock` profile, KrakenD `/assess` host switched. *(POC repo; not started)*
-- [ ] C3. Live E2E with `RULES_VERSION=v1`, then `v2` with `JEV_ENABLED=true`. *(POC stack; not started)*
+- [x] C2. POC: compose service added, mock behind the `mock` profile, KrakenD `/assess` host switched.
+  - *2026-10-02: edited in the POC working tree (uncommitted there); `docker compose config` valid and the `risk-engine` image builds from the POC compose file. Committed in the POC as `db810b7` and running in the stack.*
+- [ ] C3. Live E2E with `RULES_VERSION=v1`, then `v2` with `JEV_ENABLED=true`.
+  - *2026-10-02: v1 passed in the POC stack via `scripts/generate_real_e2e_data.py` (10 applications): $5,000 and $8,000 → APPROVED; $60,000 → PENDING_UNDERWRITING → PENDING_MANAGER_APPROVAL → APPROVED; $150,000 → REJECTED. All ten webhooks returned 202, no adapter errors. The v2 + Jev run waits on O1.*
 - [x] C4. CI: fmt, clippy, test.
   - *2026-10-02: first run green on GitHub.*
 
@@ -58,3 +60,5 @@ Phases A and B are code-complete with tests green. Tasks that touch rules or int
 - **2026-10-02** — Contract checked against `loan-onboarding-poc@737023b`. `ASSESS_DEADLINE_MS` default lowered to 4000 (adapter HTTP timeout is 5s). Plan approved for Phases A, B, C1, C4; POC edits and live E2E deferred.
 - **2026-10-02** — Phases A and B implemented in one pass (45 tests). Decisions: raw-body handler so `/assess` never returns 4xx; `R-DEADLINE` and `R-RULES-ERROR` fallbacks; `JEV_API_URL` defaults to the Typesafe System One endpoint; `state` sent to Jev as a JSON string; audit line nests `signals`/`features`/`latency_ms` as JSON strings. zen-engine 2.1.1: null inputs compare as false in table cells (covered by the I1 property test). cargo needed `CARGO_HTTP_MULTIPLEXING=false` to download on this network.
 - **2026-10-02** — C1 verified with Docker. Host port made overridable (`RISK_ENGINE_HOST_PORT`) because the POC stack publishes Mayan on 8000. C4 confirmed by the first green CI run.
+- **2026-10-02** — C2 edits made in the POC working tree: `risk-engine` service (build context `${RISK_ENGINE_BUILD_CONTEXT:-../../Rust/loan-risk-engine}`, `RISK_ENGINE_RULES_VERSION` default `v1`), `mock-risk-engine` behind `profiles: ["mock"]`, KrakenD `/assess` host → `http://risk-engine:8000`.
+- **2026-10-02** — C3 (v1) run. The POC's `.venv` points at a removed Python 3.13, so the script was run with `uv run --no-project --with httpx python scripts/generate_real_e2e_data.py`.
