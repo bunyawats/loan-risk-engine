@@ -10,7 +10,7 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 Phases A and B are implemented in this repo and green under `cargo test`: the v1 parity service, features, the Jev client, rules v2, and the audit log. `IMPLEMENTATION_PLAN.md` tracks what is ticked and what is waiting on the live E2E in the POC stack.
 
-This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"), on rules v1, and the live E2E passed with v1. Not done yet: rules v2/v3 with Jev enabled have not been run live in the POC stack (second half of C3). The Jev client itself is confirmed against the real API.
+This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"), on rules v1, and the live E2E passed with v1. Rules v3 with Jev enabled has also passed a live run in the POC stack. The v2/v3 thresholds are still unconfirmed placeholders.
 
 `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`), and `JEV_MODEL` is `jev-1.13.0` (the spec's `jev-1.13` is not a valid id).
 

@@ -6,7 +6,7 @@ E2E check in the POC stack; until then they carry a dated status note instead.
 
 ## Current Status
 
-**Next task:** the v2/v3 half of C3 (live run with `JEV_ENABLED=true`).
+**Next task:** none open in Phases A–C. Remaining: D3 (mock removal, deferred by the owner) and the open decisions below.
 
 Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev client are code-complete and tested with mocks, but not yet run live.
 
@@ -26,7 +26,7 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 - [x] B1. `features.rs` and tests.
 - [x] B2. `jev.rs`: Typesafe System One client, timeout and fallback.
   - *2026-10-02: implemented and wiremock-tested. Confirmed against the real API the same day: request accepted, parser fixed to the real answer fields (`noul`, `choice`).*
-- [ ] B3. `rules/risk_tier.v2.json` plus invariant tests I1–I5.
+- [x] B3. `rules/risk_tier.v2.json` plus invariant tests I1–I5.
   - *2026-10-02: table as SPEC §7.3, proptest invariants green; live E2E pending Phase C.*
 - [x] B4. Audit log line.
 
@@ -36,8 +36,9 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
   - *2026-10-02: image builds (200MB, runs as uid 10001); compose smoke test passed for v1 and v2.*
 - [x] C2. POC: compose service added, mock behind the `mock` profile, KrakenD `/assess` host switched.
   - *2026-10-02: edited in the POC working tree (uncommitted there); `docker compose config` valid and the `risk-engine` image builds from the POC compose file. Committed in the POC as `db810b7`. Superseded the same day: the engine now runs as a standalone container from this repo and the POC reaches it at `host.docker.internal:18000` (see Session Log).*
-- [ ] C3. Live E2E with `RULES_VERSION=v1`, then `v2` with `JEV_ENABLED=true`.
-  - *2026-10-02: v1 passed in the POC stack via `scripts/generate_real_e2e_data.py` (10 applications): $5,000 and $8,000 → APPROVED; $60,000 → PENDING_UNDERWRITING → PENDING_MANAGER_APPROVAL → APPROVED; $150,000 → REJECTED. All ten webhooks returned 202, no adapter errors. The v2 + Jev run waits on O1.*
+- [x] C3. Live E2E with `RULES_VERSION=v1`, then `v2` with `JEV_ENABLED=true`.
+  - *2026-10-02: v1 passed in the POC stack via `scripts/generate_real_e2e_data.py` (10 applications): $5,000 and $8,000 → APPROVED; $60,000 → PENDING_UNDERWRITING → PENDING_MANAGER_APPROVAL → APPROVED; $150,000 → REJECTED. All ten webhooks returned 202, no adapter errors. *
+  - *2026-10-02: v3 with `JEV_ENABLED=true` passed live (8 applications, all as expected): clean personal loan → APPROVED (L1); gambling purpose → underwriting (M3, purpose_high_risk 0.99); unstable employment → underwriting (M4); zero income → underwriting (F1); plausible vehicle → APPROVED (L1); gibberish/injection vehicle text → underwriting (M2, text_anomaly 0.98); $60,000 → underwriting → PENDING_MANAGER_APPROVAL (M7); $150,000 → REJECTED (H1). Jev latency 313–783 ms, all webhooks 202. v2 itself was not run live; v3 is a superset of it.*
 - [x] C4. CI: fmt, clippy, test.
   - *2026-10-02: first run green on GitHub.*
 
@@ -68,3 +69,4 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 - **2026-10-02** — Rules v3 added (`RULES_VERSION=v3`): v2 plus `F1`/`F2`. Invariant suite now runs over v2 and v3. Not run live; default stays `v1`.
 - **2026-10-02** — Integration changed to a standalone container. This repo's compose file publishes host port 18000 and defaults `KRAKEND_URL` to `http://host.docker.internal:8090`; the stub sink moved behind the `stub` profile. The POC dropped its in-stack `risk-engine` service and its `krakend.json` `/assess` host is now `http://host.docker.internal:18000`. Live E2E re-run on v1 through the host ports: 10 applications, same outcomes as before, all webhooks 202, no engine or adapter errors.
 - **2026-10-02** — Real Jev calls made. `jev-1.13` → HTTP 400 unknown model; `jev-latest` and `jev-1.13.0` → 200 in ~0.5s. `JEV_MODEL` default changed to `jev-1.13.0` on the owner's decision. Parser fixed from the assumed `probability`/`value` to the real `noul`/`choice`. Added `docs/component-architecture.md`.
+- **2026-10-02** — C3 second half run with rules v3 + Jev (`jev-1.13.0`) through the standalone container. Observation for O2: a plain "Toyota Camry 2024" scored `vehicle_description_plausible` 0.62, only 0.12 above the 0.5 placeholder cut-off. The engine container was left running on v3 with Jev enabled.
