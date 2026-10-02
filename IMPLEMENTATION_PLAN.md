@@ -43,9 +43,12 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 
 ## Phase D — Docs (POC side)
 
-- [ ] D1. POC `CLAUDE.md` and `risk-assessment-nats` skill updated.
-- [ ] D2. POC Known Gaps updated.
+- [x] D1. POC `CLAUDE.md` and `risk-assessment-nats` skill updated.
+  - *2026-10-02: also the POC README intro.*
+- [x] D2. POC Known Gaps updated.
+  - *2026-10-02: `known-gaps-and-gotchas` skill: thresholds now live in this repo's tables; new gaps for the second-repo build dependency and Jev.*
 - [ ] D3. Remove `mock_risk_engine/` once confirmed.
+  - *2026-10-02: owner decided to keep the mock as the rollback for now.*
 
 ## Open decisions
 
