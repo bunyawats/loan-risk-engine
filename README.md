@@ -21,7 +21,7 @@ cargo run                      # listens on :8000
 Or with a stub decisions sink standing in for KrakenD:
 
 ```bash
-docker compose up --build
+docker compose up --build        # RISK_ENGINE_HOST_PORT=18000 if 8000 is taken (the POC's Mayan uses it)
 docker compose logs -f krakend   # shows each /decisions body
 ```
 

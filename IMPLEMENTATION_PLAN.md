@@ -6,7 +6,7 @@ E2E check in the POC stack; until then they carry a dated status note instead.
 
 ## Current Status
 
-**Next task:** C1 verification (build the image), then C2 in the POC repo.
+**Next task:** the real Jev call for B2 (O1), then C2 in the POC repo.
 
 Phases A and B are code-complete with tests green. Tasks that touch rules or integration stay unticked until the live E2E (C3) has run.
 
@@ -32,12 +32,12 @@ Phases A and B are code-complete with tests green. Tasks that touch rules or int
 
 ## Phase C — Packaging and swap
 
-- [ ] C1. Dockerfile and local `docker-compose.yml` with a stub decisions sink.
-  - *2026-10-02: written, never built (Docker was not running). Verify `docker build` and `docker compose up`, including the stub image tag.*
+- [x] C1. Dockerfile and local `docker-compose.yml` with a stub decisions sink.
+  - *2026-10-02: image builds (200MB, runs as uid 10001); compose smoke test passed for v1 and v2.*
 - [ ] C2. POC: compose service added, mock behind the `mock` profile, KrakenD `/assess` host switched. *(POC repo; not started)*
 - [ ] C3. Live E2E with `RULES_VERSION=v1`, then `v2` with `JEV_ENABLED=true`. *(POC stack; not started)*
-- [ ] C4. CI: fmt, clippy, test.
-  - *2026-10-02: `.github/workflows/ci.yml` written; not yet run on GitHub.*
+- [x] C4. CI: fmt, clippy, test.
+  - *2026-10-02: first run green on GitHub.*
 
 ## Phase D — Docs (POC side)
 
@@ -57,3 +57,4 @@ Phases A and B are code-complete with tests green. Tasks that touch rules or int
 
 - **2026-10-02** — Contract checked against `loan-onboarding-poc@737023b`. `ASSESS_DEADLINE_MS` default lowered to 4000 (adapter HTTP timeout is 5s). Plan approved for Phases A, B, C1, C4; POC edits and live E2E deferred.
 - **2026-10-02** — Phases A and B implemented in one pass (45 tests). Decisions: raw-body handler so `/assess` never returns 4xx; `R-DEADLINE` and `R-RULES-ERROR` fallbacks; `JEV_API_URL` defaults to the Typesafe System One endpoint; `state` sent to Jev as a JSON string; audit line nests `signals`/`features`/`latency_ms` as JSON strings. zen-engine 2.1.1: null inputs compare as false in table cells (covered by the I1 property test). cargo needed `CARGO_HTTP_MULTIPLEXING=false` to download on this network.
+- **2026-10-02** — C1 verified with Docker. Host port made overridable (`RISK_ENGINE_HOST_PORT`) because the POC stack publishes Mayan on 8000. C4 confirmed by the first green CI run.

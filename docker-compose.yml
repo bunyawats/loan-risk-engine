@@ -4,7 +4,8 @@ services:
   risk-engine:
     build: .
     ports:
-      - "8000:8000"
+      # Override when 8000 is taken (the POC publishes Mayan there).
+      - "${RISK_ENGINE_HOST_PORT:-8000}:8000"
     environment:
       KRAKEND_URL: http://krakend:8080
       RULES_VERSION: ${RULES_VERSION:-v1}
