@@ -8,10 +8,10 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 ## Current state (update or delete this section as the scaffold lands)
 
-**Nothing below is built yet.** The repo is a bare `cargo new`: `src/main.rs` is hello-world, `Cargo.toml` has no dependencies (edition 2024), and there are no commits. The layout, commands, config, and tests described in this file are the **target**, not what exists. Do not assume a file, crate, or command is present; check first.
+**Nothing below is built yet.** The repo is a bare `cargo new`: `src/main.rs` is hello-world, `Cargo.toml` has no dependencies (edition 2024), and the only commit is the initial scaffold. The layout, commands, config, and tests described in this file are the **target**, not what exists. Do not assume a file, crate, or command is present; check first.
 
 - `IMPLEMENTATION_PLAN.md`, `README.md`, `Dockerfile`, `docker-compose.yml`, `.env.example`, `rules/`, `tests/`, and CI config do not exist. Until `IMPLEMENTATION_PLAN.md` is created, the task list is `SPEC.md` §12 (start at A1); creating the plan file from it is part of A1.
-- `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where it says so (crate name, "Target repo", the CI job in the POC's workflow, Phase D edits to the POC's docs), **this file wins**: the service is this standalone repo. `/healthz` also follows this file (it includes `rules_sha256`).
+- `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where it says so (crate name, "Target repo", the CI job in the POC's workflow, Phase D edits to the POC's docs), **this file wins**: the service is this standalone repo. `/healthz` also follows this file (it includes `rules_sha256`), and so does the `ASSESS_DEADLINE_MS` default (`4000` here, `10000` in the spec; see the contract section for why).
 
 ---
 
@@ -46,11 +46,12 @@ The POC's `risk-adapter` calls this service through **KrakenD**, and this servic
 ```
 
 - Respond **`202`** with an empty body, **after** the decision webhook has been called (blocking semantics, parity with the mock). Whole-request deadline: `ASSESS_DEADLINE_MS`.
+- **The deadline must stay under 5 seconds.** The POC's `risk-adapter` calls `/assess` with a default `httpx.AsyncClient()` (5s timeout), and KrakenD's own timeout is 10s. A slower assessment still delivers its decision through the webhook, but the adapter logs "Risk Engine /assess unreachable", which is misleading. `SIMULATED_DELAY_SECONDS` and `JEV_TIMEOUT_MS` both count against this budget.
 - **Payload by product type.** Decimals arrive as strings; parse them with `rust_decimal`, never `f64`.
   - `personal_loan`: `purpose`, `employment_status`, `monthly_income`
   - `auto_loan`: `vehicle_make_model`, `vin`, `down_payment`
   - `mortgage`: `property_address`, `appraised_value`, `down_payment`
-- Invalid or unparsable input is **not** a 4xx. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck.
+- Invalid or unparsable input is **not** a 4xx. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck. This is a deliberate difference from the mock, which answers a bad `amount` with a 500 and never sends a decision.
 
 ### Outbound: `POST {KRAKEND_URL}/decisions`
 
@@ -153,8 +154,8 @@ CI runs: fmt, clippy (`-D warnings`), and test. No Typesafe key is ever needed i
 | `TYPESAFE_API_KEY` | — | secret; `.env` only, never commit or log it |
 | `JEV_MODEL` | `jev-1.13` | **pinned**; upgrading is a deliberate change |
 | `JEV_TIMEOUT_MS` | `2000` | |
-| `ASSESS_DEADLINE_MS` | `10000` | |
-| `SIMULATED_DELAY_SECONDS` | `0` | demo parity knob with the old mock |
+| `ASSESS_DEADLINE_MS` | `4000` | keep below the `risk-adapter`'s 5s HTTP timeout |
+| `SIMULATED_DELAY_SECONDS` | `0` | demo parity knob with the old mock (whose default is `1`); counts against the deadline |
 | `RUST_LOG` | `info` | |
 
 Every new variable goes into `.env.example` and this table in the same commit.
@@ -165,7 +166,7 @@ Every new variable goes into `.env.example` and this table in the same commit.
 
 The POC consumes this service as a container. The only POC-side changes are:
 
-1. **docker-compose.yml** (POC): add a `risk-engine` service. Use either `build: ../loan-risk-engine` (sibling checkout, local dev) or `image: ghcr.io/bunyawats/loan-risk-engine:<tag>` (published). Move `mock-risk-engine` behind `profiles: ["mock"]` for rollback.
+1. **docker-compose.yml** (POC): add a `risk-engine` service. Use either `build: <path to this repo>` (local dev) or `image: ghcr.io/bunyawats/loan-risk-engine:<tag>` (published). The build path is relative to the POC's compose file: `../loan-risk-engine` for a sibling checkout, `../../Rust/loan-risk-engine` for the author's layout (`Projects/Python/loan-onboarding-poc` and `Projects/Rust/loan-risk-engine`). Move `mock-risk-engine` behind `profiles: ["mock"]` for rollback.
 2. **krakend/krakend.json** (POC): change the `/assess` backend host from `http://mock-risk-engine:8000` to `http://risk-engine:8000`.
 3. **Rollback:** revert that one KrakenD line and start the `mock` profile.
 
