@@ -117,7 +117,7 @@ impl Config {
             jev_enabled,
             jev_api_url: get("JEV_API_URL").unwrap_or_else(|| DEFAULT_JEV_API_URL.to_owned()),
             typesafe_api_key,
-            jev_model: get("JEV_MODEL").unwrap_or_else(|| "jev-1.13".to_owned()),
+            jev_model: get("JEV_MODEL").unwrap_or_else(|| "jev-1.13.0".to_owned()),
             jev_timeout: Duration::from_millis(parse(&get, "JEV_TIMEOUT_MS", 2000)?),
             assess_deadline: Duration::from_millis(parse(&get, "ASSESS_DEADLINE_MS", 4000)?),
             simulated_delay,
@@ -165,7 +165,7 @@ mod tests {
         assert_eq!(c.rules_dir, PathBuf::from("/app/rules"));
         assert!(!c.jev_enabled);
         assert_eq!(c.jev_api_url, DEFAULT_JEV_API_URL);
-        assert_eq!(c.jev_model, "jev-1.13");
+        assert_eq!(c.jev_model, "jev-1.13.0");
         assert_eq!(c.jev_timeout, Duration::from_millis(2000));
         assert_eq!(c.assess_deadline, Duration::from_millis(4000));
         assert_eq!(c.simulated_delay, Duration::ZERO);

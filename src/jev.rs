@@ -5,9 +5,10 @@
 //! `POST /v1/systemone` with `{state, model, questions}` and a bearer key, answered by
 //! `{model, answers: {<question id>: {...}}, usage}`.
 //!
-//! ASSUMPTION (not yet confirmed against a real response): the fields inside each answer.
-//! A `noul` answer is read from `probability` (or a bare number), a `choice` answer from
-//! `value`. Anything else is treated as malformed, which makes Jev `unavailable`.
+//! Answer shape, confirmed against the live API on 2026-10-02:
+//! `{"type": "noul", "noul": 0.06}` and
+//! `{"type": "choice", "choice": "stable", "confidence": 0.99, "probabilities": {...}}`.
+//! Anything else is treated as malformed, which makes Jev `unavailable`.
 
 use std::time::Duration;
 
@@ -222,10 +223,7 @@ fn noul(instructions: &str) -> Value {
 fn parse_signals(product: ProductType, body: &Value) -> Option<Signals> {
     let answers = body.get("answers")?.as_object()?;
     let probability = |id: &str| -> Option<f64> {
-        let answer = answers.get(id)?;
-        let p = answer
-            .as_f64()
-            .or_else(|| answer.get("probability")?.as_f64())?;
+        let p = answers.get(id)?.get("noul")?.as_f64()?;
         (0.0..=1.0).contains(&p).then_some(p)
     };
     let mut signals = Signals {
@@ -235,8 +233,10 @@ fn parse_signals(product: ProductType, body: &Value) -> Option<Signals> {
     match product {
         ProductType::PersonalLoan => {
             signals.purpose_high_risk = Some(probability(Q_PURPOSE_HIGH_RISK)?);
-            let answer = answers.get(Q_EMPLOYMENT_STABILITY)?;
-            let choice = answer.as_str().or_else(|| answer.get("value")?.as_str())?;
+            let choice = answers
+                .get(Q_EMPLOYMENT_STABILITY)?
+                .get("choice")?
+                .as_str()?;
             signals.employment_stability = Some(match choice {
                 "stable" => EmploymentStability::Stable,
                 "unstable" => EmploymentStability::Unstable,
@@ -301,27 +301,33 @@ mod tests {
             .unwrap()
             .typesafe_api_key
             .unwrap(),
-            "jev-1.13".into(),
+            "jev-1.13.0".into(),
             Duration::from_millis(timeout_ms),
         )
     }
 
+    /// A real response captured from `POST /v1/systemone` on 2026-10-02.
     fn personal_answers() -> Value {
         json!({
-            "model": "jev-1.13",
+            "model": "jev-1.13.0",
             "answers": {
-                "text_anomaly": {"probability": 0.02},
-                "purpose_high_risk": {"probability": 0.1},
-                "employment_stability": {"value": "stable"},
+                "text_anomaly": {"type": "noul", "noul": 0.06},
+                "purpose_high_risk": {"type": "noul", "noul": 0.04},
+                "employment_stability": {
+                    "type": "choice",
+                    "choice": "stable",
+                    "confidence": 0.99,
+                    "probabilities": {"unstable": 0.0, "unclear": 0.0, "stable": 1.0}
+                }
             },
-            "usage": {},
+            "usage": {"input_tokens": 445, "output_tokens": 80}
         })
     }
 
     #[test]
     fn request_never_contains_identifier_or_vin() {
         for req in [personal(), auto()] {
-            let body = build_request("jev-1.13", &req).to_string();
+            let body = build_request("jev-1.13.0", &req).to_string();
             assert!(!body.contains(SECRET_ID));
             assert!(!body.contains(SECRET_VIN));
             assert!(!body.contains("APP-1"));
@@ -330,8 +336,8 @@ mod tests {
 
     #[test]
     fn request_has_the_system_one_shape() {
-        let body = build_request("jev-1.13", &personal());
-        assert_eq!(body["model"], "jev-1.13");
+        let body = build_request("jev-1.13.0", &personal());
+        assert_eq!(body["model"], "jev-1.13.0");
         let state: Value = serde_json::from_str(body["state"].as_str().unwrap()).unwrap();
         assert_eq!(state["purpose"], "home renovation");
         assert_eq!(state["amount"], "20000");
@@ -339,7 +345,7 @@ mod tests {
         assert_eq!(body["questions"]["employment_stability"]["type"], "choice");
         assert!(body["questions"]["employment_stability"]["criteria"]["stable"].is_string());
 
-        let body = build_request("jev-1.13", &auto());
+        let body = build_request("jev-1.13.0", &auto());
         assert!(body["questions"].get("purpose_high_risk").is_none());
         assert_eq!(
             body["questions"]["vehicle_description_plausible"]["type"],
@@ -353,7 +359,7 @@ mod tests {
         Mock::given(method("POST"))
             .and(path("/v1/systemone"))
             .and(header("authorization", "Bearer test-key"))
-            .and(body_partial_json(json!({"model": "jev-1.13"})))
+            .and(body_partial_json(json!({"model": "jev-1.13.0"})))
             .respond_with(ResponseTemplate::new(200).set_body_json(personal_answers()))
             .expect(1)
             .mount(&server)
@@ -361,8 +367,8 @@ mod tests {
 
         let outcome = client(&server, 1000).signals(&personal()).await;
         assert_eq!(outcome.status, JevStatus::Ok);
-        assert_eq!(outcome.signals.text_anomaly, Some(0.02));
-        assert_eq!(outcome.signals.purpose_high_risk, Some(0.1));
+        assert_eq!(outcome.signals.text_anomaly, Some(0.06));
+        assert_eq!(outcome.signals.purpose_high_risk, Some(0.04));
         assert_eq!(
             outcome.signals.employment_stability,
             Some(EmploymentStability::Stable)
@@ -405,20 +411,26 @@ mod tests {
         let bodies = [
             ResponseTemplate::new(200).set_body_string("not json"),
             ResponseTemplate::new(200).set_body_json(json!({"answers": "nope"})),
-            // a signal expected for the product is missing
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"answers": {"text_anomaly": {"probability": 0.1}}})),
-            // probability out of range
-            ResponseTemplate::new(200).set_body_json(json!({"answers": {
-                "text_anomaly": {"probability": 7},
-                "purpose_high_risk": {"probability": 0.1},
-                "employment_stability": {"value": "stable"},
-            }})),
-            // unknown choice
+            // the field names assumed before the real API was checked
             ResponseTemplate::new(200).set_body_json(json!({"answers": {
                 "text_anomaly": {"probability": 0.1},
                 "purpose_high_risk": {"probability": 0.1},
-                "employment_stability": {"value": "tenured"},
+                "employment_stability": {"value": "stable"},
+            }})),
+            // a signal expected for the product is missing
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"answers": {"text_anomaly": {"type": "noul", "noul": 0.1}}})),
+            // probability out of range
+            ResponseTemplate::new(200).set_body_json(json!({"answers": {
+                "text_anomaly": {"type": "noul", "noul": 7},
+                "purpose_high_risk": {"type": "noul", "noul": 0.1},
+                "employment_stability": {"type": "choice", "choice": "stable"},
+            }})),
+            // unknown choice
+            ResponseTemplate::new(200).set_body_json(json!({"answers": {
+                "text_anomaly": {"type": "noul", "noul": 0.1},
+                "purpose_high_risk": {"type": "noul", "noul": 0.1},
+                "employment_stability": {"type": "choice", "choice": "tenured"},
             }})),
         ];
         for template in bodies {

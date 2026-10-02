@@ -10,9 +10,9 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 Phases A and B are implemented in this repo and green under `cargo test`: the v1 parity service, features, the Jev client, rules v2, and the audit log. `IMPLEMENTATION_PLAN.md` tracks what is ticked and what is waiting on the live E2E in the POC stack.
 
-This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"), on rules v1, and the live E2E passed with v1. Not done yet: the Jev answer format is unconfirmed against the real API (B2), so v2 with Jev has not been run live (second half of C3).
+This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"), on rules v1, and the live E2E passed with v1. Not done yet: rules v2/v3 with Jev enabled have not been run live in the POC stack (second half of C3). The Jev client itself is confirmed against the real API.
 
-`SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, and `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`).
+`SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`), and `JEV_MODEL` is `jev-1.13.0` (the spec's `jev-1.13` is not a valid id).
 
 ---
 
@@ -155,7 +155,7 @@ CI runs: fmt, clippy (`-D warnings`), and test. No Typesafe key is ever needed i
 | `JEV_ENABLED` | `false` | kill switch |
 | `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Typesafe System One endpoint |
 | `TYPESAFE_API_KEY` | — | secret; `.env` only, never commit or log it. Required when `JEV_ENABLED=true` (startup fails without it) |
-| `JEV_MODEL` | `jev-1.13` | **pinned**; upgrading is a deliberate change |
+| `JEV_MODEL` | `jev-1.13.0` | **pinned** exact version; upgrading is a deliberate change |
 | `JEV_TIMEOUT_MS` | `2000` | |
 | `ASSESS_DEADLINE_MS` | `4000` | keep below the `risk-adapter`'s 5s HTTP timeout |
 | `SIMULATED_DELAY_SECONDS` | `0` | demo parity knob with the old mock (whose default is `1`); counts against the deadline |
@@ -206,7 +206,8 @@ Nothing in the POC's Python code, NATS adapter, Temporal workflow, or DB changes
 - Send Jev only `product_type`, `amount`, and the payload's **text** fields. **Never** send `applicant_identifier`, names, emails, or VIN.
 - On timeout, error, or malformed response, set `jev_status = "unavailable"` with all signals `null`. Rules handle it (I3). Never retry inside the request beyond one attempt, because the deadline is short.
 - **Wire format** (copied from the author's working MCP server, `~/.hermes/skills/mcp/jev-system-one/scripts/jev_mcp_server.py`): `POST /v1/systemone` with a bearer key and `{state, model, questions}`; each question is `{type: noul|choice|score, instructions, criteria?}`; the reply is `{model, answers: {<id>: ...}, usage}`. `state` is sent as a JSON-encoded string.
-- **Open item:** the fields *inside* each answer are assumed (`probability` for `noul`, `value` for `choice`) and have not been checked against a real response, nor has the pinned `jev-1.13` id been checked against `/v1/models`. Confirm both with one real call before setting `JEV_ENABLED=true`. Every assumption lives in `jev.rs`.
+- **Answer shape, confirmed against the live API on 2026-10-02:** `{"type": "noul", "noul": 0.06}` and `{"type": "choice", "choice": "stable", "confidence": 0.99, "probabilities": {...}}`. `jev.rs` reads `noul` and `choice`; its success test uses that captured response as the fixture.
+- **Model id:** `GET /v1/models` lists only the aliases `jev-latest` and `jev-preview`, but the exact version `jev-1.13.0` (what `jev-latest` resolved to on 2026-10-02) is accepted and is the pin. The short form `jev-1.13` is rejected with HTTP 400.
 - A response missing any signal expected for the product is treated as malformed (`unavailable`), so a partial answer can never pass as clean.
 - Rules v1 never calls Jev; its `jev_status` is `skipped`.
 - Treat payload text as untrusted. It may contain prompt-injection attempts. I2 caps the damage at MEDIUM, and the `text_anomaly` signal flags it.

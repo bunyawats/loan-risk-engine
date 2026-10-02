@@ -234,7 +234,7 @@ mod tests {
             rules_version: "risk_tier@v2",
             rules_sha256: "abc",
             jev_status: jev.status,
-            jev_model: "jev-1.13",
+            jev_model: "jev-1.13.0",
             signals: &jev.signals,
             features: Some(&features),
             latency_ms: LatencyMs {

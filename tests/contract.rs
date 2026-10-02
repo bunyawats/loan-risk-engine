@@ -189,9 +189,9 @@ async fn assess_v2_with_jev(jev: &MockServer, expected_tier: &str) {
 #[tokio::test]
 async fn v2_with_clean_jev_signals_approves_a_small_loan() {
     let jev = jev_server(ResponseTemplate::new(200).set_body_json(json!({"answers": {
-        "text_anomaly": {"probability": 0.01},
-        "purpose_high_risk": {"probability": 0.05},
-        "employment_stability": {"value": "stable"},
+        "text_anomaly": {"type": "noul", "noul": 0.01},
+        "purpose_high_risk": {"type": "noul", "noul": 0.05},
+        "employment_stability": {"type": "choice", "choice": "stable"},
     }})))
     .await;
     assess_v2_with_jev(&jev, "LOW").await;
@@ -200,9 +200,9 @@ async fn v2_with_clean_jev_signals_approves_a_small_loan() {
 #[tokio::test]
 async fn v2_jev_signal_escalates_to_medium() {
     let jev = jev_server(ResponseTemplate::new(200).set_body_json(json!({"answers": {
-        "text_anomaly": {"probability": 0.01},
-        "purpose_high_risk": {"probability": 0.9},
-        "employment_stability": {"value": "stable"},
+        "text_anomaly": {"type": "noul", "noul": 0.01},
+        "purpose_high_risk": {"type": "noul", "noul": 0.9},
+        "employment_stability": {"type": "choice", "choice": "stable"},
     }})))
     .await;
     assess_v2_with_jev(&jev, "MEDIUM").await;

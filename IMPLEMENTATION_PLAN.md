@@ -6,7 +6,7 @@ E2E check in the POC stack; until then they carry a dated status note instead.
 
 ## Current Status
 
-**Next task:** the real Jev call for B2 (O1), then the v2 half of C3.
+**Next task:** the v2/v3 half of C3 (live run with `JEV_ENABLED=true`).
 
 Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev client are code-complete and tested with mocks, but not yet run live.
 
@@ -24,8 +24,8 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 ## Phase B — Features + Jev
 
 - [x] B1. `features.rs` and tests.
-- [ ] B2. `jev.rs`: Typesafe System One client, timeout and fallback.
-  - *2026-10-02: implemented and wiremock-tested. Blocked on one real call to confirm the answer field names and the `jev-1.13` model id (O1).*
+- [x] B2. `jev.rs`: Typesafe System One client, timeout and fallback.
+  - *2026-10-02: implemented and wiremock-tested. Confirmed against the real API the same day: request accepted, parser fixed to the real answer fields (`noul`, `choice`).*
 - [ ] B3. `rules/risk_tier.v2.json` plus invariant tests I1–I5.
   - *2026-10-02: table as SPEC §7.3, proptest invariants green; live E2E pending Phase C.*
 - [x] B4. Audit log line.
@@ -52,7 +52,7 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 
 ## Open decisions
 
-- **O1.** Jev request shape confirmed from the author's MCP server (`POST /v1/systemone`, `{state, model, questions}`). The per-answer response fields and the validity of the pinned `jev-1.13` id still need one real call.
+- **O1.** Jev request shape confirmed from the author's MCP server (`POST /v1/systemone`, `{state, model, questions}`). **Resolved 2026-10-02:** answer fields are `noul` and `choice`; the pin is `jev-1.13.0` (`jev-1.13` is rejected).
 - **O2.** v2 thresholds (LTV 0.97, LTI 1.0, Jev cut-offs 0.5 / 0.6) are placeholders awaiting a human decision.
 - **O3.** Whether a Jev-flagged LOW→MEDIUM should be visible to the Underwriter.
 - **O4.** Mayan document checks: out of scope.
@@ -67,3 +67,4 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 - **2026-10-02** — C3 (v1) run. The POC's `.venv` points at a removed Python 3.13, so the script was run with `uv run --no-project --with httpx python scripts/generate_real_e2e_data.py`.
 - **2026-10-02** — Rules v3 added (`RULES_VERSION=v3`): v2 plus `F1`/`F2`. Invariant suite now runs over v2 and v3. Not run live; default stays `v1`.
 - **2026-10-02** — Integration changed to a standalone container. This repo's compose file publishes host port 18000 and defaults `KRAKEND_URL` to `http://host.docker.internal:8090`; the stub sink moved behind the `stub` profile. The POC dropped its in-stack `risk-engine` service and its `krakend.json` `/assess` host is now `http://host.docker.internal:18000`. Live E2E re-run on v1 through the host ports: 10 applications, same outcomes as before, all webhooks 202, no engine or adapter errors.
+- **2026-10-02** — Real Jev calls made. `jev-1.13` → HTTP 400 unknown model; `jev-latest` and `jev-1.13.0` → 200 in ~0.5s. `JEV_MODEL` default changed to `jev-1.13.0` on the owner's decision. Parser fixed from the assumed `probability`/`value` to the real `noul`/`choice`. Added `docs/component-architecture.md`.
