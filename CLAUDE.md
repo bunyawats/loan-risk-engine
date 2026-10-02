@@ -6,12 +6,13 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 ---
 
-## Current state (update or delete this section as the scaffold lands)
+## Current state
 
-**Nothing below is built yet.** The repo is a bare `cargo new`: `src/main.rs` is hello-world, `Cargo.toml` has no dependencies (edition 2024), and the only commit is the initial scaffold. The layout, commands, config, and tests described in this file are the **target**, not what exists. Do not assume a file, crate, or command is present; check first.
+Phases A and B are implemented in this repo and green under `cargo test`: the v1 parity service, features, the Jev client, rules v2, and the audit log. `IMPLEMENTATION_PLAN.md` tracks what is ticked and what is waiting on the live E2E in the POC stack.
 
-- `IMPLEMENTATION_PLAN.md`, `README.md`, `Dockerfile`, `docker-compose.yml`, `.env.example`, `rules/`, `tests/`, and CI config do not exist. Until `IMPLEMENTATION_PLAN.md` is created, the task list is `SPEC.md` §12 (start at A1); creating the plan file from it is part of A1.
-- `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where it says so (crate name, "Target repo", the CI job in the POC's workflow, Phase D edits to the POC's docs), **this file wins**: the service is this standalone repo. `/healthz` also follows this file (it includes `rules_sha256`), and so does the `ASSESS_DEADLINE_MS` default (`4000` here, `10000` in the spec; see the contract section for why).
+Not done yet: the Docker image has never been built (C1 is written but unverified), nothing in the POC has been changed (C2), and no live E2E has run (C3).
+
+`SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, and `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`).
 
 ---
 
@@ -51,7 +52,8 @@ The POC's `risk-adapter` calls this service through **KrakenD**, and this servic
   - `personal_loan`: `purpose`, `employment_status`, `monthly_income`
   - `auto_loan`: `vehicle_make_model`, `vin`, `down_payment`
   - `mortgage`: `property_address`, `appraised_value`, `down_payment`
-- Invalid or unparsable input is **not** a 4xx. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck. This is a deliberate difference from the mock, which answers a bad `amount` with a 500 and never sends a decision.
+- If the decide stage overruns the deadline, the decision is `MEDIUM` (rule `R-DEADLINE`) and the webhook is still posted (2s timeout of its own).
+- Invalid or unparsable input is **not** a 4xx. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck. This is a deliberate difference from the mock, which answers a bad `amount` with a 500 and never sends a decision. The one exception: a body with no readable `application_id` cannot be routed anywhere, so it gets a `warn` log and a 202 with no webhook call.
 
 ### Outbound: `POST {KRAKEND_URL}/decisions`
 
@@ -80,7 +82,7 @@ The POC escalates human-approved loans of **≥ $50,000** (`MANAGER_ESCALATION_T
 
 ## Non-negotiable invariants (each one has a test; never weaken the test)
 
-- **I1** Output ∈ {LOW, MEDIUM, HIGH}. Any internal error or unexpected rules output becomes `MEDIUM`.
+- **I1** Output ∈ {LOW, MEDIUM, HIGH}. Any internal error or unexpected rules output becomes `MEDIUM` (rule `R-RULES-ERROR`).
 - **I2** **Jev can only push toward human review.** A Jev signal may turn LOW into MEDIUM, and nothing else. `HIGH` (auto-reject) and `LOW` (auto-approve) come only from deterministic conditions.
 - **I3** **Jev unavailable means no auto-approve.** On timeout, error, or `JEV_ENABLED=false` while rules v2 is active, LOW becomes MEDIUM.
 - **I4** **Manager path stays reachable.** Some inputs with `50,000 ≤ amount < HIGH cut-off` must yield `MEDIUM`.
@@ -100,7 +102,8 @@ loan-risk-engine/
     risk_tier.v1.json     # parity with the POC's mock: <15k LOW, <100k MEDIUM, else HIGH
     risk_tier.v2.json     # features + Jev signals
   src/
-    main.rs      # router, config, tracing, graceful shutdown
+    lib.rs       # AppState, build_router; everything tests import
+    main.rs      # thin binary: config, rules load, tracing, graceful shutdown
     config.rs    # env parsing; fail fast on bad config at startup
     model.rs     # AssessRequest, Payload enum, RiskTier enum, Decision
     features.rs  # pure functions, no I/O
@@ -111,8 +114,6 @@ loan-risk-engine/
   tests/
     parity.rs  rules_v2.rs  contract.rs
 ```
-
-**Lib + bin split:** the layout above omits it, but `tests/*.rs` are integration tests and can only import from a library target. The modules and the router constructor therefore need to be exposed through `src/lib.rs`, with `main.rs` reduced to a thin binary that reads config and serves.
 
 **Dependency direction:** `handler` → (`features`, `jev`, `rules`, `webhook`) → `model`. `features` and `model` do no I/O. Only `jev.rs` talks to Typesafe, and only `webhook.rs` talks to KrakenD.
 
@@ -150,8 +151,8 @@ CI runs: fmt, clippy (`-D warnings`), and test. No Typesafe key is ever needed i
 | `RULES_VERSION` | `v1` | `v1` (parity) or `v2`; v2 only after Phase C sign-off |
 | `RULES_DIR` | `/app/rules` | |
 | `JEV_ENABLED` | `false` | kill switch |
-| `JEV_API_URL` | — | see the Jev section below |
-| `TYPESAFE_API_KEY` | — | secret; `.env` only, never commit or log it |
+| `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Typesafe System One endpoint |
+| `TYPESAFE_API_KEY` | — | secret; `.env` only, never commit or log it. Required when `JEV_ENABLED=true` (startup fails without it) |
 | `JEV_MODEL` | `jev-1.13` | **pinned**; upgrading is a deliberate change |
 | `JEV_TIMEOUT_MS` | `2000` | |
 | `ASSESS_DEADLINE_MS` | `4000` | keep below the `risk-adapter`'s 5s HTTP timeout |
@@ -196,14 +197,17 @@ Nothing in the POC's Python code, NATS adapter, Temporal workflow, or DB changes
 - Jev returns **signals** (yes/no probabilities, choices). `jev.rs` turns them into typed fields, and the rules decide.
 - Send Jev only `product_type`, `amount`, and the payload's **text** fields. **Never** send `applicant_identifier`, names, emails, or VIN.
 - On timeout, error, or malformed response, set `jev_status = "unavailable"` with all signals `null`. Rules handle it (I3). Never retry inside the request beyond one attempt, because the deadline is short.
-- **Open item:** the exact Typesafe HTTP request/response shape must match the working call in the author's existing FastMCP Jev server. Until it's confirmed, mirror the TS SDK shape `systemOne({ state, questions })` and keep every assumption inside `jev.rs`.
+- **Wire format** (copied from the author's working MCP server, `~/.hermes/skills/mcp/jev-system-one/scripts/jev_mcp_server.py`): `POST /v1/systemone` with a bearer key and `{state, model, questions}`; each question is `{type: noul|choice|score, instructions, criteria?}`; the reply is `{model, answers: {<id>: ...}, usage}`. `state` is sent as a JSON-encoded string.
+- **Open item:** the fields *inside* each answer are assumed (`probability` for `noul`, `value` for `choice`) and have not been checked against a real response, nor has the pinned `jev-1.13` id been checked against `/v1/models`. Confirm both with one real call before setting `JEV_ENABLED=true`. Every assumption lives in `jev.rs`.
+- A response missing any signal expected for the product is treated as malformed (`unavailable`), so a partial answer can never pass as clean.
+- Rules v1 never calls Jev; its `jev_status` is `skipped`.
 - Treat payload text as untrusted. It may contain prompt-injection attempts. I2 caps the damage at MEDIUM, and the `text_anomaly` signal flags it.
 
 ---
 
 ## Logging & audit
 
-Emit one structured JSON line per assessment (target `risk_engine::decision`) containing: `application_id`, `product_type`, `risk_tier`, `rule_id`, `reason`, `rules_version`, `rules_sha256`, `jev_status`, `jev_model`, `signals`, `features`, per-step `latency_ms`, and `webhook_status`.
+Emit one structured JSON line per assessment (target `risk_engine::decision`) containing: `application_id`, `product_type`, `risk_tier`, `rule_id`, `reason`, `rules_version`, `rules_sha256`, `jev_status`, `jev_model`, `signals`, `features`, per-step `latency_ms`, and `webhook_status`. `tracing` fields cannot nest, so `signals`, `features`, and `latency_ms` are JSON-encoded strings inside the line.
 
 **Never log** raw payload text, `applicant_identifier`, or secrets.
 
