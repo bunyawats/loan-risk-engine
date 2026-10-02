@@ -1,0 +1,98 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "nodes": [
+    {
+      "id": "request",
+      "name": "request",
+      "type": "inputNode",
+      "content": {},
+      "position": {
+        "x": 80,
+        "y": 120
+      }
+    },
+    {
+      "id": "risk_tier",
+      "name": "risk_tier",
+      "type": "decisionTableNode",
+      "position": {
+        "x": 380,
+        "y": 120
+      },
+      "content": {
+        "hitPolicy": "first",
+        "inputs": [
+          {
+            "id": "i_amount",
+            "name": "Amount",
+            "field": "amount"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o_tier",
+            "name": "Risk tier",
+            "field": "risk_tier"
+          },
+          {
+            "id": "o_rule",
+            "name": "Rule id",
+            "field": "rule_id"
+          },
+          {
+            "id": "o_reason",
+            "name": "Reason",
+            "field": "reason"
+          }
+        ],
+        "rules": [
+          {
+            "_id": "R1-LOW",
+            "i_amount": "< 15000",
+            "o_tier": "\"LOW\"",
+            "o_rule": "\"R1-LOW\"",
+            "o_reason": "\"amount under 15,000\""
+          },
+          {
+            "_id": "R2-MED",
+            "i_amount": "< 100000",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"R2-MED\"",
+            "o_reason": "\"amount under 100,000\""
+          },
+          {
+            "_id": "R3-HIGH",
+            "i_amount": "",
+            "o_tier": "\"HIGH\"",
+            "o_rule": "\"R3-HIGH\"",
+            "o_reason": "\"amount 100,000 or more\""
+          }
+        ]
+      }
+    },
+    {
+      "id": "decision",
+      "name": "decision",
+      "type": "outputNode",
+      "content": {},
+      "position": {
+        "x": 720,
+        "y": 120
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "risk_tier"
+    },
+    {
+      "id": "e2",
+      "type": "edge",
+      "sourceId": "risk_tier",
+      "targetId": "decision"
+    }
+  ]
+}

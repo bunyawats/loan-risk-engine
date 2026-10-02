@@ -1,0 +1,298 @@
+{
+  "contentType": "application/vnd.gorules.decision",
+  "nodes": [
+    {
+      "id": "request",
+      "name": "request",
+      "type": "inputNode",
+      "content": {},
+      "position": {
+        "x": 80,
+        "y": 120
+      }
+    },
+    {
+      "id": "risk_tier",
+      "name": "risk_tier",
+      "type": "decisionTableNode",
+      "position": {
+        "x": 380,
+        "y": 120
+      },
+      "content": {
+        "hitPolicy": "first",
+        "inputs": [
+          {
+            "id": "i_product",
+            "name": "Product type",
+            "field": "product_type"
+          },
+          {
+            "id": "i_amount",
+            "name": "Amount",
+            "field": "amount"
+          },
+          {
+            "id": "i_ltv",
+            "name": "LTV",
+            "field": "ltv"
+          },
+          {
+            "id": "i_lti",
+            "name": "Loan to annual income",
+            "field": "loan_to_annual_income"
+          },
+          {
+            "id": "i_jev",
+            "name": "Jev status",
+            "field": "jev_status"
+          },
+          {
+            "id": "i_anomaly",
+            "name": "Text anomaly",
+            "field": "text_anomaly"
+          },
+          {
+            "id": "i_purpose",
+            "name": "Purpose high risk",
+            "field": "purpose_high_risk"
+          },
+          {
+            "id": "i_employment",
+            "name": "Employment stability",
+            "field": "employment_stability"
+          },
+          {
+            "id": "i_vehicle",
+            "name": "Vehicle description plausible",
+            "field": "vehicle_description_plausible"
+          },
+          {
+            "id": "i_address",
+            "name": "Address plausible",
+            "field": "address_plausible"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "o_tier",
+            "name": "Risk tier",
+            "field": "risk_tier"
+          },
+          {
+            "id": "o_rule",
+            "name": "Rule id",
+            "field": "rule_id"
+          },
+          {
+            "id": "o_reason",
+            "name": "Reason",
+            "field": "reason"
+          }
+        ],
+        "rules": [
+          {
+            "_id": "H1",
+            "i_product": "",
+            "i_amount": ">= 100000",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"HIGH\"",
+            "o_rule": "\"H1\"",
+            "o_reason": "\"amount over auto-reject cap\""
+          },
+          {
+            "_id": "H2",
+            "i_product": "\"mortgage\"",
+            "i_amount": "",
+            "i_ltv": "> 0.97",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"HIGH\"",
+            "o_rule": "\"H2\"",
+            "o_reason": "\"LTV too high\""
+          },
+          {
+            "_id": "H3",
+            "i_product": "\"personal_loan\"",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "> 1.0",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"HIGH\"",
+            "o_rule": "\"H3\"",
+            "o_reason": "\"loan exceeds annual income\""
+          },
+          {
+            "_id": "M1",
+            "i_product": "",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "\"unavailable\"",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M1\"",
+            "o_reason": "\"AI signals unavailable, human review\""
+          },
+          {
+            "_id": "M2",
+            "i_product": "",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": ">= 0.5",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M2\"",
+            "o_reason": "\"suspicious input\""
+          },
+          {
+            "_id": "M3",
+            "i_product": "\"personal_loan\"",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": ">= 0.6",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M3\"",
+            "o_reason": "\"risky purpose\""
+          },
+          {
+            "_id": "M4",
+            "i_product": "\"personal_loan\"",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "!= \"stable\"",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M4\"",
+            "o_reason": "\"employment unclear\""
+          },
+          {
+            "_id": "M5",
+            "i_product": "\"auto_loan\"",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "< 0.5",
+            "i_address": "",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M5\"",
+            "o_reason": "\"vehicle implausible\""
+          },
+          {
+            "_id": "M6",
+            "i_product": "\"mortgage\"",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "< 0.5",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M6\"",
+            "o_reason": "\"address implausible\""
+          },
+          {
+            "_id": "M7",
+            "i_product": "",
+            "i_amount": ">= 15000",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"MEDIUM\"",
+            "o_rule": "\"M7\"",
+            "o_reason": "\"standard human review band\""
+          },
+          {
+            "_id": "L1",
+            "i_product": "",
+            "i_amount": "",
+            "i_ltv": "",
+            "i_lti": "",
+            "i_jev": "",
+            "i_anomaly": "",
+            "i_purpose": "",
+            "i_employment": "",
+            "i_vehicle": "",
+            "i_address": "",
+            "o_tier": "\"LOW\"",
+            "o_rule": "\"L1\"",
+            "o_reason": "\"small, clean application\""
+          }
+        ]
+      }
+    },
+    {
+      "id": "decision",
+      "name": "decision",
+      "type": "outputNode",
+      "content": {},
+      "position": {
+        "x": 720,
+        "y": 120
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "type": "edge",
+      "sourceId": "request",
+      "targetId": "risk_tier"
+    },
+    {
+      "id": "e2",
+      "type": "edge",
+      "sourceId": "risk_tier",
+      "targetId": "decision"
+    }
+  ]
+}
