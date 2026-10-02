@@ -101,6 +101,7 @@ loan-risk-engine/
   rules/
     risk_tier.v1.json     # parity with the POC's mock: <15k LOW, <100k MEDIUM, else HIGH
     risk_tier.v2.json     # features + Jev signals
+    risk_tier.v3.json     # v2 + missing-ratio rules F1/F2
   src/
     lib.rs       # AppState, build_router; everything tests import
     main.rs      # thin binary: config, rules load, tracing, graceful shutdown
@@ -148,7 +149,7 @@ CI runs: fmt, clippy (`-D warnings`), and test. No Typesafe key is ever needed i
 |---|---|---|
 | `PORT` | `8000` | contract; don't change |
 | `KRAKEND_URL` | `http://krakend:8080` | webhook base |
-| `RULES_VERSION` | `v1` | `v1` (parity) or `v2`; v2 only after Phase C sign-off |
+| `RULES_VERSION` | `v1` | `v1` (parity), `v2`, or `v3`; v2/v3 only after Phase C sign-off |
 | `RULES_DIR` | `/app/rules` | |
 | `JEV_ENABLED` | `false` | kill switch |
 | `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Typesafe System One endpoint |
@@ -186,7 +187,8 @@ Nothing in the POC's Python code, NATS adapter, Temporal workflow, or DB changes
 - **Released versions are immutable.** Any change goes into a new file (`risk_tier.v3.json`) and a new `RULES_VERSION`. The SHA-256 of the active file is logged with every decision.
 - Hit policy is `first`. Order matters, and it is how I2 and I3 are guaranteed: every `HIGH` rule is deterministic, and every Jev-driven rule outputs `MEDIUM` and sits above the single default `LOW` rule.
 - v1 must stay byte-for-byte equivalent in behavior to the POC mock's boundary table: `1, 14999.99 → LOW`; `15000, 49999.99, 50000, 99999.99 → MEDIUM`; `100000, 150000 → HIGH`. `tests/parity.rs` enforces this.
-- Threshold values in v2 (LTV, loan-to-income, Jev cut-offs) are **placeholders awaiting a human decision**. Don't "tune" them on your own initiative.
+- v3 is v2 plus two deterministic `MEDIUM` rules placed right after the `HIGH` rules: `F1` (personal loan with no computable loan-to-income) and `F2` (mortgage with no computable LTV). Under v2 such an application could fall through to `LOW`. Auto loans need neither ratio and are unaffected. `tests/rules_v2.rs` runs the invariant suite over both v2 and v3.
+- Threshold values in v2 and v3 (LTV, loan-to-income, Jev cut-offs) are **placeholders awaiting a human decision**. Don't "tune" them on your own initiative.
 
 **Gotcha:** `zen_engine::Decision::evaluate()` returns a **`!Send`** future (it uses `Rc` internally), so it can't be awaited directly in an Axum handler. Run it inside `tokio::task::spawn_blocking` with a `current_thread` runtime (or a dedicated `LocalSet` thread). Parse the rules JSON once at startup and share it as `Arc<DecisionContent>`.
 

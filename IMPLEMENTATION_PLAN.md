@@ -56,7 +56,7 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 - **O2.** v2 thresholds (LTV 0.97, LTI 1.0, Jev cut-offs 0.5 / 0.6) are placeholders awaiting a human decision.
 - **O3.** Whether a Jev-flagged LOW→MEDIUM should be visible to the Underwriter.
 - **O4.** Mayan document checks: out of scope.
-- **O5.** v2 auto-approves a small loan whose ratio could not be computed (e.g. personal loan with `monthly_income` ≤ 0 gives a null loan-to-income, so H3 cannot fire and L1 can). Should a null required feature force MEDIUM? Needs a human decision; would be a v3 table.
+- **O5.** v2 auto-approves a small loan whose ratio could not be computed (e.g. personal loan with `monthly_income` ≤ 0 gives a null loan-to-income, so H3 cannot fire and L1 can). **Resolved 2026-10-02:** yes. `rules/risk_tier.v3.json` adds `F1`/`F2` (MEDIUM when the ratio is null); v2 is unchanged.
 
 ## Session Log
 
@@ -65,3 +65,4 @@ Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev 
 - **2026-10-02** — C1 verified with Docker. Host port made overridable (`RISK_ENGINE_HOST_PORT`) because the POC stack publishes Mayan on 8000. C4 confirmed by the first green CI run.
 - **2026-10-02** — C2 edits made in the POC working tree: `risk-engine` service (build context `${RISK_ENGINE_BUILD_CONTEXT:-../../Rust/loan-risk-engine}`, `RISK_ENGINE_RULES_VERSION` default `v1`), `mock-risk-engine` behind `profiles: ["mock"]`, KrakenD `/assess` host → `http://risk-engine:8000`.
 - **2026-10-02** — C3 (v1) run. The POC's `.venv` points at a removed Python 3.13, so the script was run with `uv run --no-project --with httpx python scripts/generate_real_e2e_data.py`.
+- **2026-10-02** — Rules v3 added (`RULES_VERSION=v3`): v2 plus `F1`/`F2`. Invariant suite now runs over v2 and v3. Not run live; default stays `v1`.

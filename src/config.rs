@@ -13,6 +13,7 @@ pub const DEFAULT_JEV_API_URL: &str = "https://api.typesafe.ai/v1/systemone";
 pub enum RulesVersion {
     V1,
     V2,
+    V3,
 }
 
 impl RulesVersion {
@@ -20,7 +21,13 @@ impl RulesVersion {
         match self {
             RulesVersion::V1 => "v1",
             RulesVersion::V2 => "v2",
+            RulesVersion::V3 => "v3",
         }
+    }
+
+    /// v1 is amount-only parity with the mock; later versions take Jev signals.
+    pub fn uses_jev(self) -> bool {
+        !matches!(self, RulesVersion::V1)
     }
 }
 
@@ -78,6 +85,7 @@ impl Config {
         let rules_version = match get("RULES_VERSION").as_deref() {
             None | Some("v1") => RulesVersion::V1,
             Some("v2") => RulesVersion::V2,
+            Some("v3") => RulesVersion::V3,
             Some(other) => return Err(invalid("RULES_VERSION", other)),
         };
         let jev_enabled = match get("JEV_ENABLED").as_deref() {
@@ -169,6 +177,10 @@ mod tests {
             config(&[("PORT", "abc")]),
             Err(ConfigError::Invalid { var: "PORT", .. })
         ));
+        assert_eq!(
+            config(&[("RULES_VERSION", "v3")]).unwrap().rules_version,
+            RulesVersion::V3
+        );
         assert!(matches!(
             config(&[("RULES_VERSION", "v9")]),
             Err(ConfigError::Invalid {

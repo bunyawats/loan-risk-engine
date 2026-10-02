@@ -10,7 +10,6 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::AppState;
-use crate::config::RulesVersion;
 use crate::features::{self, Features};
 use crate::jev::{JevOutcome, JevStatus, Signals};
 use crate::model::{
@@ -131,10 +130,10 @@ async fn decide(state: &AppState, req: &AssessRequest) -> Assessment {
     let features = features::compute(req);
 
     let jev_started = Instant::now();
-    let jev = match (state.rules.version(), &state.jev) {
-        (RulesVersion::V1, _) => JevOutcome::skipped(),
-        (RulesVersion::V2, Some(client)) => client.signals(req).await,
-        (RulesVersion::V2, None) => JevOutcome::unavailable(),
+    let jev = match (state.rules.version().uses_jev(), &state.jev) {
+        (false, _) => JevOutcome::skipped(),
+        (true, Some(client)) => client.signals(req).await,
+        (true, None) => JevOutcome::unavailable(),
     };
     let jev_ms = jev_started.elapsed().as_millis();
 

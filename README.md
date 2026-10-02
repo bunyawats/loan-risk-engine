@@ -52,6 +52,7 @@ cargo test --test contract     # /assess → /decisions
 |---|---|
 | `v1` (default) | parity with the mock: `< 15,000` LOW, `< 100,000` MEDIUM, otherwise HIGH. Jev is not called. |
 | `v2` | features plus Jev signals. With Jev disabled or unavailable, nothing is auto-approved. Thresholds are placeholders awaiting sign-off. |
+| `v3` | v2, plus: a personal loan or mortgage whose ratio cannot be computed (income or appraised value ≤ 0) goes to human review instead of possibly being auto-approved. |
 
 Released rule files are immutable; a change means a new file and a new version.
 

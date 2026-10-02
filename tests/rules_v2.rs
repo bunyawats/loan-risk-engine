@@ -1,4 +1,5 @@
-//! Invariants I1–I4 over rules v2, with generated features and Jev signals.
+//! Invariants I1–I4 over the Jev-based rules (v2 and v3), with generated features and
+//! Jev signals.
 //! (I5, invalid input → MEDIUM, is decided before the rules run; see tests/contract.rs.)
 
 use std::path::Path;
@@ -15,12 +16,16 @@ use rust_decimal::Decimal;
 const MANAGER_ESCALATION_THRESHOLD_CENTS: i64 = 5_000_000;
 const HIGH_AMOUNT_CUTOFF_CENTS: i64 = 10_000_000;
 
-fn v2() -> Rules {
+fn load(version: RulesVersion) -> Rules {
     Rules::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("rules"),
-        RulesVersion::V2,
+        version,
     )
-    .expect("v2 rules load")
+    .expect("rules load")
+}
+
+fn version() -> impl Strategy<Value = RulesVersion> {
+    prop_oneof![Just(RulesVersion::V2), Just(RulesVersion::V3)]
 }
 
 fn evaluate(
@@ -34,7 +39,7 @@ fn evaluate(
         .expect("runtime");
     runtime
         .block_on(rules.evaluate(rules::context(product, features, jev)))
-        .expect("v2 must evaluate every generated input without error")
+        .expect("rules must evaluate every generated input without error")
         .risk_tier
 }
 
@@ -115,16 +120,16 @@ proptest! {
 
     /// I1: every input, including nulls and mismatched signals, yields one of the three tiers.
     #[test]
-    fn i1_always_a_valid_tier(product in product(), features in features(), jev in jev()) {
-        let rules = v2();
+    fn i1_always_a_valid_tier(version in version(), product in product(), features in features(), jev in jev()) {
+        let rules = load(version);
         let tier = evaluate(&rules, product, &features, &jev);
         prop_assert!(matches!(tier, RiskTier::Low | RiskTier::Medium | RiskTier::High));
     }
 
     /// I2: against the same features with clean signals, Jev can only turn LOW into MEDIUM.
     #[test]
-    fn i2_jev_only_pushes_low_to_medium(product in product(), features in features(), signals in signals()) {
-        let rules = v2();
+    fn i2_jev_only_pushes_low_to_medium(version in version(), product in product(), features in features(), signals in signals()) {
+        let rules = load(version);
         let baseline = evaluate(&rules, product, &features, &ok(clean_signals()));
         let actual = evaluate(&rules, product, &features, &ok(signals));
         match baseline {
@@ -135,8 +140,8 @@ proptest! {
 
     /// I2: HIGH comes only from the deterministic conditions.
     #[test]
-    fn i2_high_iff_deterministic_condition(product in product(), features in features(), jev in jev()) {
-        let rules = v2();
+    fn i2_high_iff_deterministic_condition(version in version(), product in product(), features in features(), jev in jev()) {
+        let rules = load(version);
         let over = |value: Option<Decimal>, limit: Decimal| value.is_some_and(|v| v > limit);
         let deterministic_high = features.amount >= Decimal::new(HIGH_AMOUNT_CUTOFF_CENTS, 2)
             || (product == ProductType::Mortgage && over(features.ltv, Decimal::new(97, 2)))
@@ -147,8 +152,8 @@ proptest! {
 
     /// I3: without Jev nothing is auto-approved, whatever the signals claim.
     #[test]
-    fn i3_unavailable_never_low(product in product(), features in features(), signals in signals()) {
-        let rules = v2();
+    fn i3_unavailable_never_low(version in version(), product in product(), features in features(), signals in signals()) {
+        let rules = load(version);
         let jev = JevOutcome { status: JevStatus::Unavailable, signals };
         prop_assert_ne!(evaluate(&rules, product, &features, &jev), RiskTier::Low);
     }
@@ -156,11 +161,12 @@ proptest! {
     /// I4: the whole manager-escalation band stays MEDIUM for clean, affordable applications.
     #[test]
     fn i4_manager_band_is_medium(
+        version in version(),
         product in product(),
         cents in MANAGER_ESCALATION_THRESHOLD_CENTS..HIGH_AMOUNT_CUTOFF_CENTS,
         available in any::<bool>(),
     ) {
-        let rules = v2();
+        let rules = load(version);
         let features = Features {
             amount: Decimal::new(cents, 2),
             loan_to_annual_income: Some(Decimal::new(5, 1)),
@@ -174,7 +180,12 @@ proptest! {
 
 #[test]
 fn clean_small_application_is_low_and_each_jev_rule_escalates() {
-    let rules = v2();
+    for version in [RulesVersion::V2, RulesVersion::V3] {
+        clean_small_application_case(&load(version));
+    }
+}
+
+fn clean_small_application_case(rules: &Rules) {
     let features = Features {
         amount: Decimal::new(5_000, 0),
         loan_to_annual_income: Some(Decimal::new(1, 1)),
@@ -187,7 +198,7 @@ fn clean_small_application_is_low_and_each_jev_rule_escalates() {
         ProductType::Mortgage,
     ] {
         assert_eq!(
-            evaluate(&rules, product, &features, &ok(clean_signals())),
+            evaluate(rules, product, &features, &ok(clean_signals())),
             RiskTier::Low
         );
     }
@@ -231,9 +242,69 @@ fn clean_small_application_is_low_and_each_jev_rule_escalates() {
     ];
     for (product, signals) in escalations {
         assert_eq!(
-            evaluate(&rules, product, &features, &ok(signals.clone())),
+            evaluate(rules, product, &features, &ok(signals.clone())),
             RiskTier::Medium,
             "{product:?} {signals:?}"
+        );
+    }
+}
+
+/// v3 (open decision O5): a ratio the rules need but could not be computed sends the
+/// application to a human instead of letting it fall through to LOW.
+#[test]
+fn v3_missing_required_ratio_is_medium() {
+    let small = |lti: Option<Decimal>, ltv: Option<Decimal>| Features {
+        amount: Decimal::new(5_000, 0),
+        loan_to_annual_income: lti,
+        down_payment_ratio: None,
+        ltv,
+    };
+    let clean = ok(clean_signals());
+    let cases = [
+        (
+            ProductType::PersonalLoan,
+            small(None, None),
+            RiskTier::Low,
+            RiskTier::Medium,
+        ),
+        (
+            ProductType::Mortgage,
+            small(None, None),
+            RiskTier::Low,
+            RiskTier::Medium,
+        ),
+        // an auto loan needs neither ratio
+        (
+            ProductType::AutoLoan,
+            small(None, None),
+            RiskTier::Low,
+            RiskTier::Low,
+        ),
+        // ratios present: unchanged
+        (
+            ProductType::PersonalLoan,
+            small(Some(Decimal::new(1, 1)), None),
+            RiskTier::Low,
+            RiskTier::Low,
+        ),
+        (
+            ProductType::Mortgage,
+            small(None, Some(Decimal::new(8, 1))),
+            RiskTier::Low,
+            RiskTier::Low,
+        ),
+    ];
+    let (v2, v3) = (load(RulesVersion::V2), load(RulesVersion::V3));
+    for (product, features, expected_v2, expected_v3) in cases {
+        assert_eq!(
+            evaluate(&v2, product, &features, &clean),
+            expected_v2,
+            "v2 {product:?}"
+        );
+        assert_eq!(
+            evaluate(&v3, product, &features, &clean),
+            expected_v3,
+            "v3 {product:?}"
         );
     }
 }

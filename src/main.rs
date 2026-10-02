@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use loan_risk_engine::config::{Config, RulesVersion};
+use loan_risk_engine::config::Config;
 use loan_risk_engine::rules::Rules;
 use loan_risk_engine::{AppState, build_router};
 use tracing_subscriber::EnvFilter;
@@ -23,11 +23,11 @@ async fn main() {
         jev_enabled = config.jev_enabled,
         "starting"
     );
-    match (config.rules_version, config.jev_enabled) {
-        (RulesVersion::V2, false) => {
-            tracing::warn!("rules v2 with JEV_ENABLED=false: nothing is auto-approved")
+    match (config.rules_version.uses_jev(), config.jev_enabled) {
+        (true, false) => {
+            tracing::warn!("Jev-based rules with JEV_ENABLED=false: nothing is auto-approved")
         }
-        (RulesVersion::V1, true) => tracing::warn!("JEV_ENABLED=true is ignored by rules v1"),
+        (false, true) => tracing::warn!("JEV_ENABLED=true is ignored by rules v1"),
         _ => {}
     }
 
