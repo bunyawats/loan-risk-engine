@@ -1,5 +1,6 @@
 //! ZEN decision-table loader and evaluator.
 
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -9,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use tokio::runtime::Runtime;
 use zen_engine::model::{DecisionContent, GraphContent};
 
 use crate::ErrorChain;
@@ -53,6 +55,13 @@ pub enum RulesError {
     /// unknown tier literal or a missing field.
     #[error("rules returned an unexpected output")]
     Output(#[source] serde_json::Error),
+}
+
+thread_local! {
+    /// The current-thread runtime of this blocking-pool thread, built on its first
+    /// evaluation and reused by every later one, so a request pays for building a runtime
+    /// only when Tokio has just started a new blocking thread.
+    static RUNTIME: RefCell<Option<Runtime>> = const { RefCell::new(None) };
 }
 
 /// What the decision table must return. `risk_tier` is the enum, so any other literal is
@@ -145,7 +154,10 @@ impl Rules {
     }
 
     /// `zen_engine::Decision::evaluate` returns a `!Send` future, so it runs on a blocking
-    /// thread with its own current-thread runtime.
+    /// thread, on that thread's reused current-thread runtime.
+    ///
+    /// If the caller stops waiting before the blocking task starts (the `/assess` deadline
+    /// fired while it was queued), the evaluation is skipped instead of run for nobody.
     ///
     /// `context` is the table input, normally built by [`context`]. The table's output is
     /// checked against `RulesOutput`; anything else is a [`RulesError::Output`].
@@ -181,20 +193,33 @@ impl Rules {
     /// ```
     pub async fn evaluate(&self, context: Value) -> Result<Decision, RulesError> {
         let graph = Arc::clone(&self.graph);
+        // Dropped with this future. The blocking task sees it gone and skips the work.
+        let (caller_waiting, still_waiting) = tokio::sync::oneshot::channel::<()>();
         let result = tokio::task::spawn_blocking(move || -> Result<Value, RulesError> {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .build()
-                .map_err(RulesError::Runtime)?;
-            runtime.block_on(async {
-                let response = zen_engine::Decision::from(graph)
-                    .evaluate(context.into())
-                    .await
-                    .map_err(|e| RulesError::Engine(ErrorChain(&*e).to_string()))?;
-                Ok(response.result.to_value())
+            if caller_waiting.is_closed() {
+                return Err(RulesError::Engine("caller stopped waiting".to_owned()));
+            }
+            RUNTIME.with_borrow_mut(|slot| {
+                let runtime = match slot {
+                    Some(runtime) => runtime,
+                    None => slot.insert(
+                        tokio::runtime::Builder::new_current_thread()
+                            .build()
+                            .map_err(RulesError::Runtime)?,
+                    ),
+                };
+                runtime.block_on(async {
+                    let response = zen_engine::Decision::from(graph)
+                        .evaluate(context.into())
+                        .await
+                        .map_err(|e| RulesError::Engine(ErrorChain(&*e).to_string()))?;
+                    Ok(response.result.to_value())
+                })
             })
         })
         .await
         .map_err(RulesError::Task)??;
+        drop(still_waiting);
 
         let output: RulesOutput = serde_json::from_value(result).map_err(RulesError::Output)?;
         Ok(Decision {
