@@ -147,6 +147,8 @@ curl -s -XPOST localhost:8000/assess -H 'content-type: application/json' -d '{
 
 CI runs: fmt, clippy (`-D warnings`), and test. No Typesafe key is ever needed in CI.
 
+On macOS 27, `cargo build --release` needs Rust 1.98 or newer. Older compilers fail with `can't find crate for rquickjs_macro` (zen-engine's JavaScript engine), because of a stripping change in Apple's macOS 27 linker; see rquickjs#712. Debug builds and the Docker (Linux) build are unaffected.
+
 ---
 
 ## Configuration (env)
