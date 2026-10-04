@@ -20,7 +20,7 @@ use crate::webhook;
 use crate::{AppState, ErrorChain};
 
 /// `GET /healthz`: reports which rules are loaded and whether Jev is on. Always 200.
-pub async fn healthz(State(state): State<AppState>) -> Json<Value> {
+pub(crate) async fn healthz(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "rules_version": state.rules.label(),
         "rules_sha256": state.rules.sha256(),
@@ -34,54 +34,7 @@ pub async fn healthz(State(state): State<AppState>) -> Json<Value> {
 /// `/decisions`, then emit one audit line. Invalid input and an overrun deadline both
 /// still post a MEDIUM decision. Only a body with no readable `application_id` skips the
 /// webhook, since there is nothing to route it to.
-///
-/// # Examples
-///
-/// ```
-/// use axum::body::Body;
-/// use axum::http::{Request, StatusCode};
-/// use loan_risk_engine::config::Config;
-/// use loan_risk_engine::rules::Rules;
-/// use loan_risk_engine::{AppState, build_router};
-/// use serde_json::json;
-/// use tower::ServiceExt;
-/// use wiremock::matchers::{body_json, path};
-/// use wiremock::{Mock, MockServer, ResponseTemplate};
-///
-/// # #[tokio::main]
-/// # async fn main() {
-/// let krakend = MockServer::start().await;
-/// Mock::given(path("/decisions"))
-///     .and(body_json(json!({"application_id": "APP-1", "risk_tier": "MEDIUM"})))
-///     .respond_with(ResponseTemplate::new(202))
-///     .expect(1)
-///     .mount(&krakend)
-///     .await;
-///
-/// let rules_dir = format!("{}/rules", env!("CARGO_MANIFEST_DIR"));
-/// let config = Config::from_lookup(|name| match name {
-///     "KRAKEND_URL" => Some(krakend.uri()),
-///     "RULES_DIR" => Some(rules_dir.clone()),
-///     _ => None,
-/// })
-/// .unwrap();
-/// let rules = Rules::load(&config.rules_dir, config.rules_version).unwrap();
-///
-/// // `amount` is not a number: still 202, and the webhook gets MEDIUM (R-INVALID-INPUT).
-/// let body = r#"{"application_id": "APP-1", "applicant_identifier": "x",
-///     "product_type": "personal_loan", "amount": "lots", "payload": {}}"#;
-/// let request = Request::post("/assess")
-///     .header("content-type", "application/json")
-///     .body(Body::from(body))
-///     .unwrap();
-/// let response = build_router(AppState::new(config, rules))
-///     .oneshot(request)
-///     .await
-///     .unwrap();
-/// assert_eq!(response.status(), StatusCode::ACCEPTED);
-/// # }
-/// ```
-pub async fn assess(State(state): State<AppState>, body: Bytes) -> StatusCode {
+pub(crate) async fn assess(State(state): State<AppState>, body: Bytes) -> StatusCode {
     let started = Instant::now();
 
     let (application_id, product_type, assessment) = match AssessRequest::parse(&body) {

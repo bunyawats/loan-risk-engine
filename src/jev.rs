@@ -131,7 +131,7 @@ enum JevError {
 
 /// Client for Typesafe System One. Built once at startup when `JEV_ENABLED=true`.
 #[derive(Debug, Clone)]
-pub struct JevClient {
+pub(crate) struct JevClient {
     /// Shared connection pool (see `AppState::http`).
     http: reqwest::Client,
     /// Full endpoint URL (`JEV_API_URL`).
@@ -146,7 +146,7 @@ pub struct JevClient {
 
 impl JevClient {
     /// Bundles the settings. Makes no network call.
-    pub fn new(
+    pub(crate) fn new(
         http: reqwest::Client,
         url: String,
         api_key: Secret,
@@ -164,54 +164,7 @@ impl JevClient {
 
     /// One attempt, no retry. Every failure collapses to `unavailable` with all signals
     /// `None`; the rules turn that into human review (I3).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use std::time::Duration;
-    ///
-    /// use loan_risk_engine::config::Config;
-    /// use loan_risk_engine::jev::{JevClient, JevStatus};
-    /// use loan_risk_engine::model::AssessRequest;
-    /// use serde_json::json;
-    /// use wiremock::matchers::any;
-    /// use wiremock::{Mock, MockServer, ResponseTemplate};
-    ///
-    /// # #[tokio::main]
-    /// # async fn main() {
-    /// // A Jev stand-in that answers both mortgage questions.
-    /// let jev = MockServer::start().await;
-    /// Mock::given(any())
-    ///     .respond_with(ResponseTemplate::new(200).set_body_json(json!({"answers": {
-    ///         "text_anomaly": {"type": "noul", "noul": 0.02},
-    ///         "address_plausible": {"type": "noul", "noul": 0.97},
-    ///     }})))
-    ///     .mount(&jev)
-    ///     .await;
-    ///
-    /// let key = Config::from_lookup(|name| (name == "TYPESAFE_API_KEY").then(|| "k".to_owned()))
-    ///     .unwrap()
-    ///     .typesafe_api_key
-    ///     .unwrap();
-    /// let client = JevClient::new(
-    ///     reqwest::Client::new(),
-    ///     jev.uri(),
-    ///     key,
-    ///     "jev-1.13.0".into(),
-    ///     Duration::from_secs(1),
-    /// );
-    ///
-    /// let req = AssessRequest::parse(br#"{"application_id": "APP-1", "applicant_identifier": "x",
-    ///     "product_type": "mortgage", "amount": "90000",
-    ///     "payload": {"property_address": "1 Main St", "appraised_value": "120000", "down_payment": "30000"}}"#)
-    /// .unwrap();
-    /// let outcome = client.signals(&req).await;
-    /// assert_eq!(outcome.status, JevStatus::Ok);
-    /// assert_eq!(outcome.signals.address_plausible, Some(0.97));
-    /// assert_eq!(outcome.signals.purpose_high_risk, None); // not asked for a mortgage
-    /// # }
-    /// ```
-    pub async fn signals(&self, req: &AssessRequest) -> JevOutcome {
+    pub(crate) async fn signals(&self, req: &AssessRequest) -> JevOutcome {
         match self.call(req).await {
             Ok(signals) => JevOutcome {
                 status: JevStatus::Ok,
@@ -255,36 +208,7 @@ impl JevClient {
 /// The result is `{state, model, questions}`. `state` is a JSON-encoded string of the
 /// facts, and `questions` maps each question id to `{type, instructions, criteria?}`.
 /// `text_anomaly` is always asked; the other questions depend on the product.
-///
-/// # Examples
-///
-/// ```
-/// use loan_risk_engine::jev::build_request;
-/// use loan_risk_engine::model::{AssessRequest, Payload};
-/// use rust_decimal::Decimal;
-///
-/// let req = AssessRequest {
-///     application_id: "APP-1".into(),
-///     applicant_identifier: "secret@example.com".into(),
-///     amount: Decimal::new(32_000, 0),
-///     payload: Payload::AutoLoan {
-///         vehicle_make_model: "Toyota Yaris 2022".into(),
-///         vin: "VIN-SECRET".into(),
-///         down_payment: Decimal::new(3_000, 0),
-///     },
-/// };
-/// let body = build_request("jev-1.13.0", &req);
-/// assert_eq!(body["model"], "jev-1.13.0");
-/// assert_eq!(body["questions"]["text_anomaly"]["type"], "noul");
-/// assert_eq!(body["questions"]["vehicle_description_plausible"]["type"], "noul");
-///
-/// // `state` is a JSON string that holds only non-identifying facts.
-/// let state = body["state"].as_str().unwrap();
-/// assert!(state.contains("Toyota Yaris 2022"));
-/// assert!(!state.contains("secret@example.com"));
-/// assert!(!state.contains("VIN-SECRET"));
-/// ```
-pub fn build_request(model: &str, req: &AssessRequest) -> Value {
+pub(crate) fn build_request(model: &str, req: &AssessRequest) -> Value {
     let mut state = json!({
         "product_type": req.product_type().as_str(),
         "amount": req.amount.to_string(),

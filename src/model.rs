@@ -251,17 +251,7 @@ impl AssessRequest {
 
 /// Best effort: an invalid request can still be routed to a human if we know which
 /// application it belongs to.
-///
-/// # Examples
-///
-/// ```
-/// use loan_risk_engine::model::salvage_application_id;
-///
-/// let invalid = br#"{"application_id": "APP-1", "amount": "??"}"#;
-/// assert_eq!(salvage_application_id(invalid), Some("APP-1".to_owned()));
-/// assert_eq!(salvage_application_id(b"not json"), None);
-/// ```
-pub fn salvage_application_id(body: &[u8]) -> Option<String> {
+pub(crate) fn salvage_application_id(body: &[u8]) -> Option<String> {
     let value: Value = serde_json::from_slice(body).ok()?;
     value.get("application_id")?.as_str().map(str::to_owned)
 }

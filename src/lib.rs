@@ -9,16 +9,16 @@
 //! - [`features`]: deterministic ratios computed from the request (no I/O).
 //! - [`jev`]: the Typesafe Jev client that turns free text into signals.
 //! - [`rules`]: the ZEN decision-table loader and evaluator.
-//! - [`webhook`]: the `/decisions` client that reports the tier back to KrakenD.
-//! - [`handler`]: the Axum handlers that tie the steps together.
+//! - `webhook` (private): the `/decisions` client that reports the tier back to KrakenD.
+//! - `handler` (private): the Axum handlers that tie the steps together.
 
 pub mod config;
 pub mod features;
-pub mod handler;
+mod handler;
 pub mod jev;
 pub mod model;
 pub mod rules;
-pub mod webhook;
+mod webhook;
 
 use std::error::Error;
 use std::fmt;
@@ -36,18 +36,18 @@ use crate::rules::Rules;
 #[derive(Clone)]
 pub struct AppState {
     /// Settings parsed from the environment at startup.
-    pub config: Arc<Config>,
+    pub(crate) config: Arc<Config>,
     /// The active decision table (`RULES_VERSION`), parsed and compiled once.
-    pub rules: Arc<Rules>,
+    pub(crate) rules: Arc<Rules>,
     /// Connection pool shared by the Jev client and the webhook. Each call sets its own
     /// timeout, so the client itself has none.
-    pub http: reqwest::Client,
+    pub(crate) http: reqwest::Client,
     /// `None` when `JEV_ENABLED=false`.
-    pub jev: Option<Arc<JevClient>>,
+    pub(crate) jev: Option<Arc<JevClient>>,
 }
 
 impl AppState {
-    /// Builds the state, creating a [`JevClient`] only when `JEV_ENABLED=true` and a
+    /// Builds the state, creating the Jev client only when `JEV_ENABLED=true` and a
     /// `TYPESAFE_API_KEY` is set. (`Config` already refuses the first without the second.)
     pub fn new(config: Config, rules: Rules) -> Self {
         let http = reqwest::Client::new();
@@ -93,6 +93,54 @@ impl AppState {
 ///     .await
 ///     .unwrap();
 /// assert_eq!(response.status(), StatusCode::OK);
+/// # }
+/// ```
+///
+/// `POST /assess` always answers 202 after posting the decision. An invalid body still
+/// posts MEDIUM (`R-INVALID-INPUT`):
+///
+/// ```
+/// use axum::body::Body;
+/// use axum::http::{Request, StatusCode};
+/// use loan_risk_engine::config::Config;
+/// use loan_risk_engine::rules::Rules;
+/// use loan_risk_engine::{AppState, build_router};
+/// use serde_json::json;
+/// use tower::ServiceExt;
+/// use wiremock::matchers::{body_json, path};
+/// use wiremock::{Mock, MockServer, ResponseTemplate};
+///
+/// # #[tokio::main]
+/// # async fn main() {
+/// let krakend = MockServer::start().await;
+/// Mock::given(path("/decisions"))
+///     .and(body_json(json!({"application_id": "APP-1", "risk_tier": "MEDIUM"})))
+///     .respond_with(ResponseTemplate::new(202))
+///     .expect(1)
+///     .mount(&krakend)
+///     .await;
+///
+/// let rules_dir = format!("{}/rules", env!("CARGO_MANIFEST_DIR"));
+/// let config = Config::from_lookup(|name| match name {
+///     "KRAKEND_URL" => Some(krakend.uri()),
+///     "RULES_DIR" => Some(rules_dir.clone()),
+///     _ => None,
+/// })
+/// .unwrap();
+/// let rules = Rules::load(&config.rules_dir, config.rules_version).unwrap();
+///
+/// // `amount` is not a number: still 202, and the webhook gets MEDIUM (R-INVALID-INPUT).
+/// let body = r#"{"application_id": "APP-1", "applicant_identifier": "x",
+///     "product_type": "personal_loan", "amount": "lots", "payload": {}}"#;
+/// let request = Request::post("/assess")
+///     .header("content-type", "application/json")
+///     .body(Body::from(body))
+///     .unwrap();
+/// let response = build_router(AppState::new(config, rules))
+///     .oneshot(request)
+///     .await
+///     .unwrap();
+/// assert_eq!(response.status(), StatusCode::ACCEPTED);
 /// # }
 /// ```
 pub fn build_router(state: AppState) -> Router {

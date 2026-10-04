@@ -117,6 +117,8 @@ loan-risk-engine/
     parity.rs  rules_v2.rs  contract.rs
 ```
 
+**Public API:** the crate is published on crates.io, so every `pub` item is a semver promise. Public: `config`, `model`, `features`, `rules`, the `jev` signal types, `AppState::new`, and `build_router` (what `tests/` and the doctests use). Private: `handler`, `webhook`, `JevClient`, `jev::build_request`, and `AppState`'s fields. Removing or changing a public item needs a minor-version bump while the crate is `0.x`.
+
 **Dependency direction:** `handler` → (`features`, `jev`, `rules`, `webhook`) → `model`. `features` and `model` do no I/O. Only `jev.rs` talks to Typesafe, and only `webhook.rs` talks to KrakenD.
 
 ---
