@@ -3,6 +3,7 @@
 //! (I5, invalid input → MEDIUM, is decided before the rules run; see tests/contract.rs.)
 
 use std::path::Path;
+use std::sync::LazyLock;
 
 use loan_risk_engine::config::RulesVersion;
 use loan_risk_engine::features::Features;
@@ -17,13 +18,31 @@ const MANAGER_ESCALATION_THRESHOLD_CENTS: i64 = 5_000_000;
 /// Amounts at or above this are HIGH in v2/v3 (same cut-off as v1).
 const HIGH_AMOUNT_CUTOFF_CENTS: i64 = 10_000_000;
 
-/// Loads a table from the repo's `rules/` folder.
-fn load(version: RulesVersion) -> Rules {
+// Loaded once and shared by every case; proptest runs hundreds of them.
+static RULES_V2: LazyLock<Rules> = LazyLock::new(|| load_from_disk(RulesVersion::V2));
+static RULES_V3: LazyLock<Rules> = LazyLock::new(|| load_from_disk(RulesVersion::V3));
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("runtime")
+});
+
+/// Reads a table from the repo's `rules/` folder.
+fn load_from_disk(version: RulesVersion) -> Rules {
     Rules::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("rules"),
         version,
     )
     .expect("rules load")
+}
+
+/// The shared, already-loaded table for a Jev-based version.
+fn load(version: RulesVersion) -> &'static Rules {
+    match version {
+        RulesVersion::V2 => &RULES_V2,
+        RulesVersion::V3 => &RULES_V3,
+        RulesVersion::V1 => panic!("v1 is covered by tests/parity.rs"),
+    }
 }
 
 /// Every Jev-based rules version.
@@ -38,10 +57,7 @@ fn evaluate(
     features: &Features,
     jev: &JevOutcome,
 ) -> RiskTier {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .build()
-        .expect("runtime");
-    runtime
+    RUNTIME
         .block_on(rules.evaluate(rules::context(product, features, jev)))
         .expect("rules must evaluate every generated input without error")
         .risk_tier
@@ -134,7 +150,7 @@ proptest! {
     #[test]
     fn i1_always_a_valid_tier(version in version(), product in product(), features in features(), jev in jev()) {
         let rules = load(version);
-        let tier = evaluate(&rules, product, &features, &jev);
+        let tier = evaluate(rules, product, &features, &jev);
         prop_assert!(matches!(tier, RiskTier::Low | RiskTier::Medium | RiskTier::High));
     }
 
@@ -142,8 +158,8 @@ proptest! {
     #[test]
     fn i2_jev_only_pushes_low_to_medium(version in version(), product in product(), features in features(), signals in signals()) {
         let rules = load(version);
-        let baseline = evaluate(&rules, product, &features, &ok(clean_signals()));
-        let actual = evaluate(&rules, product, &features, &ok(signals));
+        let baseline = evaluate(rules, product, &features, &ok(clean_signals()));
+        let actual = evaluate(rules, product, &features, &ok(signals));
         match baseline {
             RiskTier::Low => prop_assert!(matches!(actual, RiskTier::Low | RiskTier::Medium)),
             other => prop_assert_eq!(actual, other),
@@ -158,7 +174,7 @@ proptest! {
         let deterministic_high = features.amount >= Decimal::new(HIGH_AMOUNT_CUTOFF_CENTS, 2)
             || (product == ProductType::Mortgage && over(features.ltv, Decimal::new(97, 2)))
             || (product == ProductType::PersonalLoan && over(features.loan_to_annual_income, Decimal::ONE));
-        let tier = evaluate(&rules, product, &features, &jev);
+        let tier = evaluate(rules, product, &features, &jev);
         prop_assert_eq!(tier == RiskTier::High, deterministic_high);
     }
 
@@ -167,7 +183,7 @@ proptest! {
     fn i3_unavailable_never_low(version in version(), product in product(), features in features(), signals in signals()) {
         let rules = load(version);
         let jev = JevOutcome { status: JevStatus::Unavailable, signals };
-        prop_assert_ne!(evaluate(&rules, product, &features, &jev), RiskTier::Low);
+        prop_assert_ne!(evaluate(rules, product, &features, &jev), RiskTier::Low);
     }
 
     /// I4: the whole manager-escalation band stays MEDIUM for clean, affordable applications.
@@ -186,14 +202,14 @@ proptest! {
             ltv: Some(Decimal::new(8, 1)),
         };
         let jev = if available { ok(clean_signals()) } else { JevOutcome::unavailable() };
-        prop_assert_eq!(evaluate(&rules, product, &features, &jev), RiskTier::Medium);
+        prop_assert_eq!(evaluate(rules, product, &features, &jev), RiskTier::Medium);
     }
 }
 
 #[test]
 fn clean_small_application_is_low_and_each_jev_rule_escalates() {
     for version in [RulesVersion::V2, RulesVersion::V3] {
-        clean_small_application_case(&load(version));
+        clean_small_application_case(load(version));
     }
 }
 
@@ -310,12 +326,12 @@ fn v3_missing_required_ratio_is_medium() {
     let (v2, v3) = (load(RulesVersion::V2), load(RulesVersion::V3));
     for (product, features, expected_v2, expected_v3) in cases {
         assert_eq!(
-            evaluate(&v2, product, &features, &clean),
+            evaluate(v2, product, &features, &clean),
             expected_v2,
             "v2 {product:?}"
         );
         assert_eq!(
-            evaluate(&v3, product, &features, &clean),
+            evaluate(v3, product, &features, &clean),
             expected_v3,
             "v3 {product:?}"
         );

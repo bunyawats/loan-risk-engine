@@ -1,6 +1,6 @@
 //! `/assess` orchestration: parse → features → jev → rules → webhook → audit log.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::body::Bytes;
@@ -99,7 +99,7 @@ pub(crate) async fn assess(State(state): State<AppState>, body: Bytes) -> Status
         latency_ms: LatencyMs {
             jev: assessment.jev_ms,
             rules: assessment.rules_ms,
-            total: started.elapsed().as_millis(),
+            total: millis(started.elapsed()),
         },
         webhook_status,
     }
@@ -117,9 +117,9 @@ struct Assessment {
     /// Jev status and signals (`skipped` for v1 and for fallbacks).
     jev: JevOutcome,
     /// Time spent in the Jev step, in milliseconds.
-    jev_ms: u128,
+    jev_ms: u64,
     /// Time spent evaluating the rules, in milliseconds.
-    rules_ms: u128,
+    rules_ms: u64,
 }
 
 impl Assessment {
@@ -152,7 +152,7 @@ async fn decide(state: &AppState, req: &AssessRequest) -> Assessment {
         (true, Some(client)) => client.signals(req).await,
         (true, None) => JevOutcome::unavailable(),
     };
-    let jev_ms = jev_started.elapsed().as_millis();
+    let jev_ms = millis(jev_started.elapsed());
 
     let rules_started = Instant::now();
     let context = rules::context(req.product_type(), &features, &jev);
@@ -169,19 +169,25 @@ async fn decide(state: &AppState, req: &AssessRequest) -> Assessment {
         features: Some(features),
         jev,
         jev_ms,
-        rules_ms: rules_started.elapsed().as_millis(),
+        rules_ms: millis(rules_started.elapsed()),
     }
+}
+
+/// Whole milliseconds as `u64` (`Duration::as_millis` returns `u128`). Saturates rather
+/// than wraps, though no request runs for 584 million years.
+fn millis(elapsed: Duration) -> u64 {
+    u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
 }
 
 /// Per-step timings in milliseconds for the audit line.
 #[derive(Debug, Serialize)]
 struct LatencyMs {
     /// The Jev step (0 when skipped or for a fallback).
-    jev: u128,
+    jev: u64,
     /// Rules evaluation (0 for a fallback).
-    rules: u128,
+    rules: u64,
     /// Whole request, from receipt to after the webhook call.
-    total: u128,
+    total: u64,
 }
 
 /// One line per assessment. By construction it holds no payload text and no
