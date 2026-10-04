@@ -16,6 +16,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use thiserror::Error;
 
+use crate::ErrorChain;
 use crate::config::Secret;
 use crate::model::{AssessRequest, Payload, ProductType};
 
@@ -114,13 +115,16 @@ impl JevOutcome {
 /// Internal failure reasons. Logged, then collapsed into [`JevOutcome::unavailable`].
 #[derive(Debug, Error)]
 enum JevError {
-    /// Connection failure or timeout. The URL is stripped from the message.
-    #[error("transport error: {0}")]
-    Transport(String),
+    /// Connection failure or timeout. The URL is stripped from the error.
+    #[error("transport error")]
+    Transport(#[source] reqwest::Error),
     /// Jev answered with a non-2xx status.
     #[error("HTTP {0}")]
     Status(u16),
-    /// The body is not JSON, or lacks a signal the product needs.
+    /// The body could not be read or is not JSON.
+    #[error("unreadable response body")]
+    Body(#[source] reqwest::Error),
+    /// The body is JSON but lacks a signal the product needs, or holds an invalid one.
     #[error("malformed response")]
     Malformed,
 }
@@ -214,7 +218,7 @@ impl JevClient {
                 signals,
             },
             Err(error) => {
-                tracing::warn!(application_id = %req.application_id, %error, "Jev unavailable");
+                tracing::warn!(application_id = %req.application_id, error = %ErrorChain(&error), "Jev unavailable");
                 JevOutcome::unavailable()
             }
         }
@@ -230,12 +234,15 @@ impl JevClient {
             .json(&build_request(&self.model, req))
             .send()
             .await
-            .map_err(|e| JevError::Transport(e.without_url().to_string()))?;
+            .map_err(|e| JevError::Transport(e.without_url()))?;
         let status = response.status();
         if !status.is_success() {
             return Err(JevError::Status(status.as_u16()));
         }
-        let body: Value = response.json().await.map_err(|_| JevError::Malformed)?;
+        let body: Value = response
+            .json()
+            .await
+            .map_err(|e| JevError::Body(e.without_url()))?;
         parse_signals(req.product_type(), &body).ok_or(JevError::Malformed)
     }
 }

@@ -20,6 +20,8 @@ pub mod model;
 pub mod rules;
 pub mod webhook;
 
+use std::error::Error;
+use std::fmt;
 use std::sync::Arc;
 
 use axum::Router;
@@ -98,4 +100,65 @@ pub fn build_router(state: AppState) -> Router {
         .route("/assess", post(handler::assess))
         .route("/healthz", get(handler::healthz))
         .with_state(state)
+}
+
+/// Displays an error followed by its whole `source()` chain: `outer: cause: root cause`.
+///
+/// Error types here keep their cause as a `#[source]` and leave it out of their own
+/// message, so a plain `%error` in a log line would drop the detail that matters (e.g.
+/// "connection refused"). Log `%ErrorChain(&error)` instead. A cause whose message repeats
+/// the previous one is skipped, since some libraries print their source as their own message.
+pub(crate) struct ErrorChain<'a>(pub(crate) &'a (dyn Error + 'static));
+
+impl fmt::Display for ErrorChain<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut previous = self.0.to_string();
+        f.write_str(&previous)?;
+        let mut source = self.0.source();
+        while let Some(error) = source {
+            let message = error.to_string();
+            if message != previous {
+                write!(f, ": {message}")?;
+            }
+            previous = message;
+            source = error.source();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("{message}")]
+    struct Layer {
+        message: &'static str,
+        #[source]
+        source: Option<Box<Layer>>,
+    }
+
+    fn layer(message: &'static str, source: Option<Layer>) -> Layer {
+        Layer {
+            message,
+            source: source.map(Box::new),
+        }
+    }
+
+    #[test]
+    fn error_chain_prints_every_cause_once() {
+        let error = layer(
+            "webhook failed",
+            Some(layer(
+                "connection refused",
+                Some(layer("connection refused", None)),
+            )),
+        );
+        assert_eq!(
+            ErrorChain(&error).to_string(),
+            "webhook failed: connection refused"
+        );
+        assert_eq!(ErrorChain(&layer("alone", None)).to_string(), "alone");
+    }
 }

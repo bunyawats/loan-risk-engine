@@ -25,9 +25,9 @@ pub enum WebhookError {
     /// KrakenD answered with a non-2xx status.
     #[error("/decisions returned HTTP {0}")]
     Status(u16),
-    /// Connection failure or timeout. The URL is stripped from the message.
-    #[error("/decisions transport error: {0}")]
-    Transport(String),
+    /// Connection failure or timeout. The URL is stripped from the error.
+    #[error("/decisions transport error")]
+    Transport(#[source] reqwest::Error),
 }
 
 /// Posts the decision to `{krakend_url}/decisions` with a [`WEBHOOK_TIMEOUT`] timeout.
@@ -78,7 +78,7 @@ pub async fn post_decision(
         })
         .send()
         .await
-        .map_err(|e| WebhookError::Transport(e.without_url().to_string()))?;
+        .map_err(|e| WebhookError::Transport(e.without_url()))?;
     let status = response.status();
     if status.is_success() {
         Ok(status.as_u16())

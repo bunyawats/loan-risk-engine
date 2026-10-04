@@ -9,7 +9,6 @@ use axum::http::StatusCode;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::AppState;
 use crate::features::{self, Features};
 use crate::jev::{JevOutcome, JevStatus, Signals};
 use crate::model::{
@@ -18,6 +17,7 @@ use crate::model::{
 };
 use crate::rules;
 use crate::webhook;
+use crate::{AppState, ErrorChain};
 
 /// `GET /healthz`: reports which rules are loaded and whether Jev is on. Always 200.
 pub async fn healthz(State(state): State<AppState>) -> Json<Value> {
@@ -125,7 +125,7 @@ pub async fn assess(State(state): State<AppState>, body: Bytes) -> StatusCode {
     {
         Ok(status) => Some(status),
         Err(error) => {
-            tracing::error!(%application_id, %error, "decision webhook failed");
+            tracing::error!(%application_id, error = %ErrorChain(&error), "decision webhook failed");
             match error {
                 webhook::WebhookError::Status(status) => Some(status),
                 webhook::WebhookError::Transport(_) => None,
@@ -206,7 +206,7 @@ async fn decide(state: &AppState, req: &AssessRequest) -> Assessment {
     let decision = match state.rules.evaluate(context).await {
         Ok(decision) => decision,
         Err(error) => {
-            tracing::error!(application_id = %req.application_id, %error, "rules failed; falling back to MEDIUM");
+            tracing::error!(application_id = %req.application_id, error = %ErrorChain(&error), "rules failed; falling back to MEDIUM");
             Decision::medium(RULE_RULES_ERROR, "rules evaluation failed")
         }
     };

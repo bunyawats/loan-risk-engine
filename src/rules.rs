@@ -11,31 +11,48 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zen_engine::model::{DecisionContent, GraphContent};
 
+use crate::ErrorChain;
 use crate::config::RulesVersion;
 use crate::features::Features;
 use crate::jev::JevOutcome;
 use crate::model::{Decision, ProductType, RiskTier};
 
-/// Loading errors (`Read`, `Parse`) stop startup. Evaluation errors (`Evaluate`,
-/// `Output`) become a MEDIUM decision with rule `R-RULES-ERROR` (I1).
+/// Loading errors (`Read`, `Parse`, `NotAGraph`) stop startup. The others happen during
+/// evaluation and become a MEDIUM decision with rule `R-RULES-ERROR` (I1).
+///
+/// Each variant keeps its underlying error as `source()` where it can, so logs can print
+/// the whole chain. Messages leave the source out to avoid printing it twice.
 #[derive(Debug, Error)]
 pub enum RulesError {
     /// The rules file could not be read from disk.
-    #[error("cannot read rules file {path}: {source}")]
+    #[error("cannot read rules file {path}")]
     Read {
         path: String,
         source: std::io::Error,
     },
-    /// The file is not valid JSON or not a ZEN decision graph.
-    #[error("rules file {path} is not a decision graph: {reason}")]
-    Parse { path: String, reason: String },
-    /// The ZEN engine failed, or the blocking task panicked.
+    /// The file is not valid JSON, or not a valid ZEN document.
+    #[error("cannot parse rules file {path}")]
+    Parse {
+        path: String,
+        source: serde_json::Error,
+    },
+    /// The file is a ZEN "policy" document; only a decision graph can be evaluated.
+    #[error("rules file {path} is a policy, not a decision graph")]
+    NotAGraph { path: String },
+    /// The current-thread runtime for the evaluation could not be built.
+    #[error("cannot start the rules runtime")]
+    Runtime(#[source] std::io::Error),
+    /// The blocking evaluation task panicked or was cancelled.
+    #[error("rules evaluation task failed")]
+    Task(#[source] tokio::task::JoinError),
+    /// The ZEN engine reported an error. Its error type is `!Send` and cannot leave the
+    /// blocking thread, so it arrives here as text, cause chain included.
     #[error("rules evaluation failed: {0}")]
-    Evaluate(String),
+    Engine(String),
     /// The table ran but returned something other than `RulesOutput`, such as an
     /// unknown tier literal or a missing field.
-    #[error("rules returned an unexpected output: {0}")]
-    Output(String),
+    #[error("rules returned an unexpected output")]
+    Output(#[source] serde_json::Error),
 }
 
 /// What the decision table must return. `risk_tier` is the enum, so any other literal is
@@ -86,20 +103,23 @@ impl Rules {
             path: display.clone(),
             source,
         })?;
-        Self::from_bytes(&bytes, version).map_err(|reason| RulesError::Parse {
-            path: display,
-            reason,
-        })
+        Self::from_bytes(&bytes, version, &display)
     }
 
-    /// Parses and compiles a table from raw bytes. The error is a plain message that
-    /// `load` wraps with the path. A ZEN "policy" document is rejected; only a graph works.
-    fn from_bytes(bytes: &[u8], version: RulesVersion) -> Result<Self, String> {
-        let content: DecisionContent = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    /// Parses and compiles a table from raw bytes. `path` is only used in error messages.
+    /// A ZEN "policy" document is rejected; only a graph works.
+    fn from_bytes(bytes: &[u8], version: RulesVersion, path: &str) -> Result<Self, RulesError> {
+        let content: DecisionContent =
+            serde_json::from_slice(bytes).map_err(|source| RulesError::Parse {
+                path: path.to_owned(),
+                source,
+            })?;
         let mut graph = content
             .as_graph()
             .cloned()
-            .ok_or_else(|| "expected a decision graph, got a policy".to_owned())?;
+            .ok_or_else(|| RulesError::NotAGraph {
+                path: path.to_owned(),
+            })?;
         graph.compile();
         Ok(Rules {
             graph: Arc::new(graph),
@@ -161,24 +181,22 @@ impl Rules {
     /// ```
     pub async fn evaluate(&self, context: Value) -> Result<Decision, RulesError> {
         let graph = Arc::clone(&self.graph);
-        let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
+        let result = tokio::task::spawn_blocking(move || -> Result<Value, RulesError> {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .build()
-                .map_err(|e| e.to_string())?;
+                .map_err(RulesError::Runtime)?;
             runtime.block_on(async {
                 let response = zen_engine::Decision::from(graph)
                     .evaluate(context.into())
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| RulesError::Engine(ErrorChain(&*e).to_string()))?;
                 Ok(response.result.to_value())
             })
         })
         .await
-        .map_err(|e| RulesError::Evaluate(e.to_string()))?
-        .map_err(RulesError::Evaluate)?;
+        .map_err(RulesError::Task)??;
 
-        let output: RulesOutput =
-            serde_json::from_value(result).map_err(|e| RulesError::Output(e.to_string()))?;
+        let output: RulesOutput = serde_json::from_value(result).map_err(RulesError::Output)?;
         Ok(Decision {
             risk_tier: output.risk_tier,
             rule_id: output.rule_id,
@@ -269,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn evaluates_a_table_into_a_typed_decision() {
-        let rules = Rules::from_bytes(&table("\"HIGH\""), RulesVersion::V1).unwrap();
+        let rules = Rules::from_bytes(&table("\"HIGH\""), RulesVersion::V1, "test.json").unwrap();
         let decision = rules.evaluate(json!({"amount": 1})).await.unwrap();
         assert_eq!(decision.risk_tier, RiskTier::High);
         assert_eq!(decision.rule_id, "X1");
@@ -279,7 +297,8 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_tier_is_an_error_not_a_string() {
-        let rules = Rules::from_bytes(&table("\"VERY_HIGH\""), RulesVersion::V1).unwrap();
+        let rules =
+            Rules::from_bytes(&table("\"VERY_HIGH\""), RulesVersion::V1, "test.json").unwrap();
         assert!(matches!(
             rules.evaluate(json!({"amount": 1})).await,
             Err(RulesError::Output(_))
@@ -288,7 +307,13 @@ mod tests {
 
     #[test]
     fn rejects_files_that_are_not_graphs() {
-        assert!(Rules::from_bytes(b"not json", RulesVersion::V1).is_err());
-        assert!(Rules::from_bytes(br#"{"nodes": 5}"#, RulesVersion::V1).is_err());
+        assert!(matches!(
+            Rules::from_bytes(b"not json", RulesVersion::V1, "test.json"),
+            Err(RulesError::Parse { .. })
+        ));
+        assert!(matches!(
+            Rules::from_bytes(br#"{"nodes": 5}"#, RulesVersion::V1, "test.json"),
+            Err(RulesError::Parse { .. })
+        ));
     }
 }
