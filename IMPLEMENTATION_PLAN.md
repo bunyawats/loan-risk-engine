@@ -10,7 +10,7 @@ E2E check in the POC stack; until then they carry a dated status note instead.
 
 Rules v1 is verified end to end in the POC stack (latest live run 2026-10-04, on 0.1.1). Rules v3 with Jev passed its own live run on 2026-10-02; v2 has not run live, since v3 is a superset of it. Published on crates.io; latest release 0.2.2.
 
-As of 2026-10-04 the POC's engine container runs the 0.1.1 image on rules v3 with Jev on (key restored from `~/.hermes/.env`; see CLAUDE.md, "Recreating the container"). It has not been rebuilt with 0.2.x.
+As of 2026-10-04 the POC's engine container runs the 0.2.2 code on rules v3 with Jev on (key from `~/.hermes/.env`; see CLAUDE.md, "Recreating the container").
 
 ## Phase A — Skeleton + parity (no Jev)
 
@@ -79,3 +79,4 @@ As of 2026-10-04 the POC's engine container runs the 0.1.1 image on rules v3 wit
 - **2026-10-04** — 0.2.1 (compatible with 0.2.0): `Rules::evaluate` reuses one current-thread runtime per blocking-pool thread (thread-local) and skips an evaluation whose caller stopped waiting; measured ~10–19 µs → 9.5 µs per evaluation. A dedicated worker thread was rejected because a dead worker could not produce the public `RulesError::Task(JoinError)`. Property tests load rules once (0.46 s → 0.20 s); audit latencies are `u64`. Local `cargo build --release` fails on this Mac (`can't find crate for rquickjs_macro`, even after `cargo clean --release`); debug builds and the Docker image build are unaffected. Not investigated.
 - **2026-10-04** — 0.2.2: `zen-engine` built with its `arbitrary_precision` feature. Before, only `serde_json` had it (since 0.1.1), so zen read input numbers via `f64` and `Decimal::from_f64`; now it parses their text exactly. All tests unchanged. The rules context still builds numbers from `f64`, which is exact for 2-place amounts below 10 trillion and for 4-place ratios. Not run live.
 - **2026-10-04** — Jev key restored. It had been lost when the container was recreated for the v1 E2E without passing `TYPESAFE_API_KEY` (compose defaults it to empty). The owner keeps it in `~/.hermes/.env`; the engine was recreated on v3 + Jev with `--no-build`, and a throwaway container's real Jev call returned `jev_status=ok` (`jev-1.13.0`, 337 ms). CLAUDE.md now documents how to recreate the container without losing the key.
+- **2026-10-04** — Engine image rebuilt with 0.2.2 and recreated on v3 + Jev. Mayan was paused for the build (`docker compose stop mayan` / `start mayan` in the POC) to avoid another OOM kill; the build took 83 s and nothing in the POC was killed. A throwaway container of the new image confirmed: clean personal loan → LOW (L1, `jev_status=ok`); `-5000` → MEDIUM (`R-INVALID-INPUT`); a dead webhook logs the full error chain. Not re-run through the POC E2E.
