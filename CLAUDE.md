@@ -99,7 +99,7 @@ If a requested change would violate one of these, stop and ask. Don't work aroun
 
 ```
 loan-risk-engine/
-  CLAUDE.md  SPEC.md  IMPLEMENTATION_PLAN.md  README.md
+  CLAUDE.md  AGENTS.md  SPEC.md  IMPLEMENTATION_PLAN.md  README.md
   Cargo.toml  Dockerfile  docker-compose.yml  .env.example
   rules/
     risk_tier.v1.json     # parity with the POC's mock: <15k LOW, <100k MEDIUM, else HIGH
@@ -242,7 +242,7 @@ Emit one structured JSON line per assessment (target `risk_engine::decision`) co
 
 - **Start of session:** read `IMPLEMENTATION_PLAN.md` → "Current Status". Pick the next unchecked task and don't start a second one in parallel.
 - **Check a box only when** its DoD is met (tests green, and the live E2E check above when the task touches rules or integration). Otherwise leave a dated status note under the task.
-- **Update this file** when a decision changes architecture, the contract, invariants, or config. Log smaller decisions in the plan's Session Log.
+- **Update this file** when a decision changes architecture, the contract, invariants, or config. `AGENTS.md` only points other agents here; keep guidance in this file, not there. Log smaller decisions in the plan's Session Log.
 - **Commits:** small and focused, one task per commit, with the message referencing the task id (e.g. `A3: ZEN loader with spawn_blocking`). Run fmt, clippy, and test before committing.
 - **Ask before:** changing the contract, any invariant, the v1 table, the pinned `JEV_MODEL`, or v2 threshold values.
 - No `unwrap()`/`expect()` on request-path code. Use typed errors (`thiserror`) mapped to the MEDIUM fallback. `expect` is fine at startup for config and rules loading (fail fast).
