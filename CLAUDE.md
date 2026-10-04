@@ -52,7 +52,7 @@ The POC's `risk-adapter` calls this service through **KrakenD**, and this servic
   - `personal_loan`: `purpose`, `employment_status`, `monthly_income`
   - `auto_loan`: `vehicle_make_model`, `vin`, `down_payment`
   - `mortgage`: `property_address`, `appraised_value`, `down_payment`
-  - A decimal sent as a JSON number is accepted with every digit kept: `serde_json` is built with `arbitrary_precision`, so a number never passes through `f64`.
+  - A decimal sent as a JSON number is accepted with every digit kept: `serde_json` is built with `arbitrary_precision`, so a number never passes through `f64`. `zen-engine` has the same feature enabled, so the rules parse their input numbers exactly too.
 - If the decide stage overruns the deadline, the decision is `MEDIUM` (rule `R-DEADLINE`) and the webhook is still posted (2s timeout of its own).
 - Invalid or unparsable input is **not** a 4xx. A zero or negative `amount` counts as invalid; otherwise the rules would read it as a small loan and could auto-approve it. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck. This is a deliberate difference from the mock, which answers a bad `amount` with a 500 and never sends a decision. The one exception: a body with no readable `application_id` cannot be routed anywhere, so it gets a `warn` log and a 202 with no webhook call.
 

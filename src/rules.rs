@@ -233,7 +233,12 @@ impl Rules {
 /// The table's input. Ratios and signals that do not apply are `null`.
 ///
 /// Field names here are the `field` names the JSON tables match on, so renaming one is a
-/// rules change. Decimals become JSON numbers (`f64`) because that is what ZEN compares.
+/// rules change.
+///
+/// Decimals go in as JSON numbers by way of `f64`. ZEN, built with `arbitrary_precision`,
+/// parses each number's text into its own `Decimal`. An `f64` prints back the same digits
+/// for any value with up to 15 significant digits, which covers every 2-place amount below
+/// 10 trillion and every 4-place ratio, so the table compares the exact values.
 ///
 /// # Examples
 ///
