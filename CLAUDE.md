@@ -8,9 +8,11 @@ Read this first, then `SPEC.md` (the full design), then `IMPLEMENTATION_PLAN.md`
 
 ## Current state
 
-Phases A and B are implemented in this repo and green under `cargo test`: the v1 parity service, features, the Jev client, rules v2, and the audit log. `IMPLEMENTATION_PLAN.md` tracks what is ticked and what is waiting on the live E2E in the POC stack.
+Phases A–C are complete and green under `cargo test` and CI: the v1 parity service, features, the Jev client, rules v2 and v3, the audit log, Docker packaging, and the POC integration. Only D3 (removing the POC's mock) is open, deferred by the owner. `IMPLEMENTATION_PLAN.md` tracks tasks, open decisions, and the Session Log.
 
-This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"), on rules v1, and the live E2E passed with v1. Rules v3 with Jev enabled has also passed a live run in the POC stack. The v2/v3 thresholds are still unconfirmed placeholders.
+This service runs as a standalone container that the POC stack reaches over host ports (see "Integration with loan-onboarding-poc"). The live E2E passed on rules v1, most recently on 2026-10-04 with 0.1.1. Rules v3 with Jev enabled passed a separate live run on 2026-10-02; v2 was never run live (v3 is a superset). The POC's `generate_real_e2e_data.py` only passes on v1: it always sends the purpose "Debt consolidation", which Jev scores as risky. The v2/v3 thresholds are still unconfirmed placeholders (open decision O2).
+
+The crate is published on crates.io as `loan-risk-engine` (latest 0.2.2, docs on docs.rs). Each release bumps `Cargo.toml`, gets an annotated `vX.Y.Z` tag, `cargo publish`, and a GitHub release. See "Public API" under the repository layout for what is semver-relevant.
 
 `SPEC.md` was drafted when the service was going to live inside the POC repo as `risk_engine_rs/`. Where the two differ, **this file wins**: the service is this standalone repo, `/healthz` includes `rules_sha256`, `ASSESS_DEADLINE_MS` defaults to `4000` (not `10000`), and `JEV_MODEL` is `jev-1.13.0` (the spec's `jev-1.13` is not a valid id).
 

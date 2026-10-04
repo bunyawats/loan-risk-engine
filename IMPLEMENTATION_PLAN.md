@@ -8,7 +8,9 @@ E2E check in the POC stack; until then they carry a dated status note instead.
 
 **Next task:** none open in Phases A–C. Remaining: D3 (mock removal, deferred by the owner) and the open decisions below.
 
-Rules v1 is live in the POC stack and verified end to end. Rules v2 and the Jev client are code-complete and tested with mocks, but not yet run live.
+Rules v1 is verified end to end in the POC stack (latest live run 2026-10-04, on 0.1.1). Rules v3 with Jev passed its own live run on 2026-10-02; v2 has not run live, since v3 is a superset of it. Published on crates.io; latest release 0.2.2.
+
+As of 2026-10-04 the POC's engine container runs the 0.1.1 image on rules v1 with Jev off. The Typesafe key was not carried over when it was recreated, so restoring v3 + Jev needs the key again.
 
 ## Phase A — Skeleton + parity (no Jev)
 
