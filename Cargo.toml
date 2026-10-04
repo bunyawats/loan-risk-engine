@@ -1,6 +1,6 @@
 [package]
 name = "loan-risk-engine"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Loan risk-tier microservice (Axum + ZEN decision tables + Jev signals) for loan-onboarding-poc"
 license = "MIT OR Apache-2.0"
