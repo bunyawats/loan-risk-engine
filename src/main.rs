@@ -1,3 +1,8 @@
+//! Binary entry point: JSON logging, config, rules, then the Axum server on `PORT`.
+//!
+//! Every failure here is a startup failure and panics on purpose (fail fast). Nothing on
+//! the request path lives in this file.
+
 use std::net::SocketAddr;
 
 use loan_risk_engine::config::Config;
@@ -5,6 +10,9 @@ use loan_risk_engine::rules::Rules;
 use loan_risk_engine::{AppState, build_router};
 use tracing_subscriber::EnvFilter;
 
+/// Starts the service. Logs the active rules version and SHA-256 at startup, and warns
+/// when `JEV_ENABLED` and `RULES_VERSION` disagree (v2/v3 without Jev never auto-approves;
+/// v1 ignores Jev).
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -43,6 +51,8 @@ async fn main() {
         .expect("server error");
 }
 
+/// Resolves on Ctrl-C, or on SIGTERM on Unix (what `docker stop` sends), so in-flight
+/// requests can finish before the server exits.
 async fn shutdown_signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]

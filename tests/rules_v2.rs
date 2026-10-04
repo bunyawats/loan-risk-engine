@@ -14,8 +14,10 @@ use rust_decimal::Decimal;
 
 /// The POC's MANAGER_ESCALATION_THRESHOLD_USD.
 const MANAGER_ESCALATION_THRESHOLD_CENTS: i64 = 5_000_000;
+/// Amounts at or above this are HIGH in v2/v3 (same cut-off as v1).
 const HIGH_AMOUNT_CUTOFF_CENTS: i64 = 10_000_000;
 
+/// Loads a table from the repo's `rules/` folder.
 fn load(version: RulesVersion) -> Rules {
     Rules::load(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("rules"),
@@ -24,10 +26,12 @@ fn load(version: RulesVersion) -> Rules {
     .expect("rules load")
 }
 
+/// Every Jev-based rules version.
 fn version() -> impl Strategy<Value = RulesVersion> {
     prop_oneof![Just(RulesVersion::V2), Just(RulesVersion::V3)]
 }
 
+/// Builds the rules context and evaluates it.
 fn evaluate(
     rules: &Rules,
     product: ProductType,
@@ -43,6 +47,7 @@ fn evaluate(
         .risk_tier
 }
 
+/// Signals that should never escalate anything on their own.
 fn clean_signals() -> Signals {
     Signals {
         purpose_high_risk: Some(0.0),
@@ -53,6 +58,7 @@ fn clean_signals() -> Signals {
     }
 }
 
+/// An `Ok` Jev outcome carrying `signals`.
 fn ok(signals: Signals) -> JevOutcome {
     JevOutcome {
         status: JevStatus::Ok,
@@ -60,6 +66,7 @@ fn ok(signals: Signals) -> JevOutcome {
     }
 }
 
+/// Any product type.
 fn product() -> impl Strategy<Value = ProductType> {
     prop_oneof![
         Just(ProductType::PersonalLoan),
@@ -68,10 +75,12 @@ fn product() -> impl Strategy<Value = ProductType> {
     ]
 }
 
+/// An optional ratio in `0.0000..3.0000`.
 fn ratio() -> impl Strategy<Value = Option<Decimal>> {
     proptest::option::of((0i64..30_000).prop_map(|n| Decimal::new(n, 4)))
 }
 
+/// Arbitrary features: amounts up to $200,000 and independent optional ratios.
 fn features() -> impl Strategy<Value = Features> {
     (0i64..20_000_000, ratio(), ratio(), ratio()).prop_map(|(cents, lti, dpr, ltv)| Features {
         amount: Decimal::new(cents, 2),
@@ -81,10 +90,12 @@ fn features() -> impl Strategy<Value = Features> {
     })
 }
 
+/// An optional probability in `0.0..=1.0`.
 fn probability() -> impl Strategy<Value = Option<f64>> {
     proptest::option::of(0.0f64..=1.0)
 }
 
+/// Arbitrary signals, each independently present or absent.
 fn signals() -> impl Strategy<Value = Signals> {
     let stability = proptest::option::of(prop_oneof![
         Just(EmploymentStability::Stable),
@@ -107,6 +118,7 @@ fn signals() -> impl Strategy<Value = Signals> {
         })
 }
 
+/// An arbitrary Jev outcome: `Ok` or `Unavailable`, with any signals (even mismatched ones).
 fn jev() -> impl Strategy<Value = JevOutcome> {
     (
         prop_oneof![Just(JevStatus::Ok), Just(JevStatus::Unavailable)],
@@ -185,6 +197,7 @@ fn clean_small_application_is_low_and_each_jev_rule_escalates() {
     }
 }
 
+/// The checks behind `clean_small_application_is_low_and_each_jev_rule_escalates`.
 fn clean_small_application_case(rules: &Rules) {
     let features = Features {
         amount: Decimal::new(5_000, 0),

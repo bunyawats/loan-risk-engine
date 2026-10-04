@@ -6,18 +6,25 @@ use serde::{Serialize, Serializer};
 
 use crate::model::{AssessRequest, Payload};
 
+/// Decimal places every ratio is rounded to.
 const RATIO_DP: u32 = 4;
+/// Turns `monthly_income` into annual income.
 const MONTHS_PER_YEAR: Decimal = Decimal::from_parts(12, 0, 0, false, 0);
 
 /// Ratios are `None` when they do not apply to the product or their denominator is not
 /// positive.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Features {
+    /// The requested loan amount, copied from the request.
     pub amount: Decimal,
+    /// Personal loans only: `amount / (monthly_income * 12)`.
     #[serde(serialize_with = "ratio_as_number")]
     pub loan_to_annual_income: Option<Decimal>,
+    /// Auto loans: `down_payment / (amount + down_payment)`, taking the vehicle price as the
+    /// loan plus the down payment. Mortgages: `down_payment / appraised_value`.
     #[serde(serialize_with = "ratio_as_number")]
     pub down_payment_ratio: Option<Decimal>,
+    /// Mortgages only: loan-to-value, `amount / appraised_value`.
     #[serde(serialize_with = "ratio_as_number")]
     pub ltv: Option<Decimal>,
 }
@@ -30,6 +37,31 @@ fn ratio_as_number<S: Serializer>(
     value.and_then(|d| d.to_f64()).serialize(serializer)
 }
 
+/// Computes the ratios that apply to the request's product. Never panics: an overflow
+/// or a non-positive denominator leaves the ratio `None`.
+///
+/// # Examples
+///
+/// ```
+/// use loan_risk_engine::features::compute;
+/// use loan_risk_engine::model::{AssessRequest, Payload};
+/// use rust_decimal::Decimal;
+///
+/// let req = AssessRequest {
+///     application_id: "APP-1".into(),
+///     applicant_identifier: "a@b.c".into(),
+///     amount: Decimal::new(90_000, 0),
+///     payload: Payload::Mortgage {
+///         property_address: "1 Main St".into(),
+///         appraised_value: Decimal::new(120_000, 0),
+///         down_payment: Decimal::new(30_000, 0),
+///     },
+/// };
+/// let features = compute(&req);
+/// assert_eq!(features.ltv, Some(Decimal::new(75, 2))); // 90k / 120k
+/// assert_eq!(features.down_payment_ratio, Some(Decimal::new(25, 2))); // 30k / 120k
+/// assert_eq!(features.loan_to_annual_income, None); // personal loans only
+/// ```
 pub fn compute(req: &AssessRequest) -> Features {
     let amount = req.amount;
     let mut features = Features {
@@ -59,6 +91,8 @@ pub fn compute(req: &AssessRequest) -> Features {
     features
 }
 
+/// `numerator / denominator` rounded to [`RATIO_DP`] places, or `None` when the
+/// denominator is zero or negative or the division overflows.
 fn ratio(numerator: Decimal, denominator: Decimal) -> Option<Decimal> {
     if denominator <= Decimal::ZERO {
         return None;

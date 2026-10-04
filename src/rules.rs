@@ -16,17 +16,24 @@ use crate::features::Features;
 use crate::jev::JevOutcome;
 use crate::model::{Decision, ProductType, RiskTier};
 
+/// Loading errors (`Read`, `Parse`) stop startup. Evaluation errors (`Evaluate`,
+/// `Output`) become a MEDIUM decision with rule `R-RULES-ERROR` (I1).
 #[derive(Debug, Error)]
 pub enum RulesError {
+    /// The rules file could not be read from disk.
     #[error("cannot read rules file {path}: {source}")]
     Read {
         path: String,
         source: std::io::Error,
     },
+    /// The file is not valid JSON or not a ZEN decision graph.
     #[error("rules file {path} is not a decision graph: {reason}")]
     Parse { path: String, reason: String },
+    /// The ZEN engine failed, or the blocking task panicked.
     #[error("rules evaluation failed: {0}")]
     Evaluate(String),
+    /// The table ran but returned something other than `RulesOutput`, such as an
+    /// unknown tier literal or a missing field.
     #[error("rules returned an unexpected output: {0}")]
     Output(String),
 }
@@ -40,15 +47,38 @@ struct RulesOutput {
     reason: String,
 }
 
+/// The active decision table, loaded and compiled once at startup.
 #[derive(Debug, Clone)]
 pub struct Rules {
+    /// The compiled ZEN graph, shared with each blocking evaluation.
     graph: Arc<GraphContent>,
+    /// Which `RULES_VERSION` this is. Decides whether Jev is consulted.
     version: RulesVersion,
+    /// `risk_tier@<version>`, reported as `rules_version` in logs and `/healthz`.
     label: String,
+    /// Hex SHA-256 of the file's exact bytes, so every decision can be traced to the table
+    /// that made it.
     sha256: String,
 }
 
 impl Rules {
+    /// Reads `<dir>/risk_tier.<version>.json`, parses it, and compiles it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// use loan_risk_engine::config::RulesVersion;
+    /// use loan_risk_engine::rules::Rules;
+    ///
+    /// let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("rules");
+    /// let rules = Rules::load(&dir, RulesVersion::V1).unwrap();
+    /// assert_eq!(rules.label(), "risk_tier@v1");
+    /// assert_eq!(rules.sha256().len(), 64); // hex SHA-256
+    ///
+    /// assert!(Rules::load(Path::new("/no/such/dir"), RulesVersion::V1).is_err());
+    /// ```
     pub fn load(dir: &Path, version: RulesVersion) -> Result<Self, RulesError> {
         let path = dir.join(format!("risk_tier.{}.json", version.as_str()));
         let display = path.display().to_string();
@@ -62,6 +92,8 @@ impl Rules {
         })
     }
 
+    /// Parses and compiles a table from raw bytes. The error is a plain message that
+    /// `load` wraps with the path. A ZEN "policy" document is rejected; only a graph works.
     fn from_bytes(bytes: &[u8], version: RulesVersion) -> Result<Self, String> {
         let content: DecisionContent = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
         let mut graph = content
@@ -77,6 +109,7 @@ impl Rules {
         })
     }
 
+    /// The loaded rules version.
     pub fn version(&self) -> RulesVersion {
         self.version
     }
@@ -86,12 +119,46 @@ impl Rules {
         &self.label
     }
 
+    /// Hex SHA-256 of the rules file.
     pub fn sha256(&self) -> &str {
         &self.sha256
     }
 
     /// `zen_engine::Decision::evaluate` returns a `!Send` future, so it runs on a blocking
     /// thread with its own current-thread runtime.
+    ///
+    /// `context` is the table input, normally built by [`context`]. The table's output is
+    /// checked against `RulesOutput`; anything else is a [`RulesError::Output`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    ///
+    /// use loan_risk_engine::config::RulesVersion;
+    /// use loan_risk_engine::features::Features;
+    /// use loan_risk_engine::jev::JevOutcome;
+    /// use loan_risk_engine::model::{ProductType, RiskTier};
+    /// use loan_risk_engine::rules::{Rules, context};
+    /// use rust_decimal::Decimal;
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("rules");
+    /// let rules = Rules::load(&dir, RulesVersion::V1).unwrap();
+    /// let features = Features {
+    ///     amount: Decimal::new(60_000, 0),
+    ///     loan_to_annual_income: None,
+    ///     down_payment_ratio: None,
+    ///     ltv: None,
+    /// };
+    /// let decision = rules
+    ///     .evaluate(context(ProductType::AutoLoan, &features, &JevOutcome::skipped()))
+    ///     .await
+    ///     .unwrap();
+    /// assert_eq!(decision.risk_tier, RiskTier::Medium); // v1: 15k <= amount < 100k
+    /// # }
+    /// ```
     pub async fn evaluate(&self, context: Value) -> Result<Decision, RulesError> {
         let graph = Arc::clone(&self.graph);
         let result = tokio::task::spawn_blocking(move || -> Result<Value, String> {
@@ -121,6 +188,32 @@ impl Rules {
 }
 
 /// The table's input. Ratios and signals that do not apply are `null`.
+///
+/// Field names here are the `field` names the JSON tables match on, so renaming one is a
+/// rules change. Decimals become JSON numbers (`f64`) because that is what ZEN compares.
+///
+/// # Examples
+///
+/// ```
+/// use loan_risk_engine::features::Features;
+/// use loan_risk_engine::jev::JevOutcome;
+/// use loan_risk_engine::model::ProductType;
+/// use loan_risk_engine::rules::context;
+/// use rust_decimal::Decimal;
+///
+/// let features = Features {
+///     amount: Decimal::new(90_000, 0),
+///     loan_to_annual_income: None,
+///     down_payment_ratio: Some(Decimal::new(25, 2)),
+///     ltv: Some(Decimal::new(75, 2)),
+/// };
+/// let input = context(ProductType::Mortgage, &features, &JevOutcome::unavailable());
+/// assert_eq!(input["product_type"], "mortgage");
+/// assert_eq!(input["ltv"], 0.75);
+/// assert_eq!(input["jev_status"], "unavailable");
+/// assert!(input["loan_to_annual_income"].is_null());
+/// assert!(input["address_plausible"].is_null());
+/// ```
 pub fn context(product: ProductType, features: &Features, jev: &JevOutcome) -> Value {
     let signals = &jev.signals;
     json!({
@@ -138,6 +231,7 @@ pub fn context(product: ProductType, features: &Features, jev: &JevOutcome) -> V
     })
 }
 
+/// A decimal as a JSON number, or `null` when absent or not representable as `f64`.
 fn number(value: Option<Decimal>) -> Value {
     value
         .and_then(|d| d.to_f64())

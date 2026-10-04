@@ -14,6 +14,7 @@ use tower::ServiceExt;
 use wiremock::matchers::{body_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
+/// The real router, configured from `vars` and the repo's `rules/` folder.
 fn app(vars: &[(&str, &str)]) -> axum::Router {
     let rules_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("rules");
     let mut map: HashMap<String, String> = vars
@@ -26,6 +27,7 @@ fn app(vars: &[(&str, &str)]) -> axum::Router {
     build_router(AppState::new(config, rules))
 }
 
+/// Sends `body` to `POST /assess` and returns the status and response body.
 async fn post_assess(app: axum::Router, body: String) -> (StatusCode, Vec<u8>) {
     let response = app
         .oneshot(
@@ -46,6 +48,7 @@ async fn post_assess(app: axum::Router, body: String) -> (StatusCode, Vec<u8>) {
     (status, bytes.to_vec())
 }
 
+/// A valid personal-loan `/assess` body for `amount`.
 fn personal(amount: &str) -> Value {
     json!({
         "application_id": "APP-1",
@@ -159,6 +162,7 @@ async fn v2_without_jev_never_auto_approves() {
     assert_eq!(status, StatusCode::ACCEPTED);
 }
 
+/// A Jev stand-in that answers every request with `response`.
 async fn jev_server(response: ResponseTemplate) -> MockServer {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
@@ -170,6 +174,7 @@ async fn jev_server(response: ResponseTemplate) -> MockServer {
     server
 }
 
+/// Runs one v2 assessment against `jev` and checks the posted tier.
 async fn assess_v2_with_jev(jev: &MockServer, expected_tier: &str) {
     let krakend = krakend_expecting(expected_tier).await;
     let (status, _) = post_assess(

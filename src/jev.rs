@@ -19,22 +19,35 @@ use thiserror::Error;
 use crate::config::Secret;
 use crate::model::{AssessRequest, Payload, ProductType};
 
+// Question ids. Each is a key in the request's `questions` and in the reply's `answers`,
+// and matches the `Signals` field of the same name.
+
+/// Personal loans: probability that `purpose` is a high-risk use of funds.
 const Q_PURPOSE_HIGH_RISK: &str = "purpose_high_risk";
+/// Personal loans: a choice among `stable`, `unstable`, `unclear`.
 const Q_EMPLOYMENT_STABILITY: &str = "employment_stability";
+/// Auto loans: probability that the vehicle description is plausible for the amount.
 const Q_VEHICLE_PLAUSIBLE: &str = "vehicle_description_plausible";
+/// Mortgages: probability that the address looks complete and real.
 const Q_ADDRESS_PLAUSIBLE: &str = "address_plausible";
+/// Every product: probability that the text is junk or a prompt-injection attempt.
 const Q_TEXT_ANOMALY: &str = "text_anomaly";
 
+/// How the Jev step went. Passed to the rules as `jev_status` and logged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum JevStatus {
+    /// Jev answered with every signal the product needs.
     Ok,
+    /// Timeout, transport error, non-2xx, malformed reply, or Jev disabled under v2/v3.
+    /// All signals are `None`, and the rules never auto-approve (I3).
     Unavailable,
     /// Rules v1 does not use Jev at all.
     Skipped,
 }
 
 impl JevStatus {
+    /// The literal the rules and the audit log see (`"ok"`, ...).
     pub fn as_str(self) -> &'static str {
         match self {
             JevStatus::Ok => "ok",
@@ -44,6 +57,7 @@ impl JevStatus {
     }
 }
 
+/// Jev's reading of `employment_status` (personal loans only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EmploymentStability {
@@ -53,22 +67,34 @@ pub enum EmploymentStability {
 }
 
 /// Typed signals. Jev never returns a tier; the rules decide.
+///
+/// Probabilities are in `0.0..=1.0`. A field is `None` when it does not apply to the
+/// product or Jev was not `Ok`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct Signals {
+    /// Personal loans: probability that the purpose is high-risk or speculative.
     pub purpose_high_risk: Option<f64>,
+    /// Personal loans: how stable the described employment is.
     pub employment_stability: Option<EmploymentStability>,
+    /// Auto loans: probability that the vehicle description is real and fits the amount.
     pub vehicle_description_plausible: Option<f64>,
+    /// Mortgages: probability that the property address is complete and real.
     pub address_plausible: Option<f64>,
+    /// Every product: probability that the text is test data, gibberish, or manipulation.
     pub text_anomaly: Option<f64>,
 }
 
+/// The result of the Jev step: a status plus whatever signals came with it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JevOutcome {
+    /// Whether the signals can be trusted.
     pub status: JevStatus,
+    /// All `None` unless `status` is `Ok`.
     pub signals: Signals,
 }
 
 impl JevOutcome {
+    /// Jev failed or is disabled: no signals.
     pub fn unavailable() -> Self {
         JevOutcome {
             status: JevStatus::Unavailable,
@@ -76,6 +102,7 @@ impl JevOutcome {
         }
     }
 
+    /// Jev was not consulted (rules v1, or a fallback decision): no signals.
     pub fn skipped() -> Self {
         JevOutcome {
             status: JevStatus::Skipped,
@@ -84,26 +111,37 @@ impl JevOutcome {
     }
 }
 
+/// Internal failure reasons. Logged, then collapsed into [`JevOutcome::unavailable`].
 #[derive(Debug, Error)]
 enum JevError {
+    /// Connection failure or timeout. The URL is stripped from the message.
     #[error("transport error: {0}")]
     Transport(String),
+    /// Jev answered with a non-2xx status.
     #[error("HTTP {0}")]
     Status(u16),
+    /// The body is not JSON, or lacks a signal the product needs.
     #[error("malformed response")]
     Malformed,
 }
 
+/// Client for Typesafe System One. Built once at startup when `JEV_ENABLED=true`.
 #[derive(Debug, Clone)]
 pub struct JevClient {
+    /// Shared connection pool (see `AppState::http`).
     http: reqwest::Client,
+    /// Full endpoint URL (`JEV_API_URL`).
     url: String,
+    /// Bearer key (`TYPESAFE_API_KEY`).
     api_key: Secret,
+    /// Pinned model id sent with every request (`JEV_MODEL`).
     model: String,
+    /// Per-request timeout (`JEV_TIMEOUT_MS`).
     timeout: Duration,
 }
 
 impl JevClient {
+    /// Bundles the settings. Makes no network call.
     pub fn new(
         http: reqwest::Client,
         url: String,
@@ -122,6 +160,53 @@ impl JevClient {
 
     /// One attempt, no retry. Every failure collapses to `unavailable` with all signals
     /// `None`; the rules turn that into human review (I3).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use loan_risk_engine::config::Config;
+    /// use loan_risk_engine::jev::{JevClient, JevStatus};
+    /// use loan_risk_engine::model::AssessRequest;
+    /// use serde_json::json;
+    /// use wiremock::matchers::any;
+    /// use wiremock::{Mock, MockServer, ResponseTemplate};
+    ///
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// // A Jev stand-in that answers both mortgage questions.
+    /// let jev = MockServer::start().await;
+    /// Mock::given(any())
+    ///     .respond_with(ResponseTemplate::new(200).set_body_json(json!({"answers": {
+    ///         "text_anomaly": {"type": "noul", "noul": 0.02},
+    ///         "address_plausible": {"type": "noul", "noul": 0.97},
+    ///     }})))
+    ///     .mount(&jev)
+    ///     .await;
+    ///
+    /// let key = Config::from_lookup(|name| (name == "TYPESAFE_API_KEY").then(|| "k".to_owned()))
+    ///     .unwrap()
+    ///     .typesafe_api_key
+    ///     .unwrap();
+    /// let client = JevClient::new(
+    ///     reqwest::Client::new(),
+    ///     jev.uri(),
+    ///     key,
+    ///     "jev-1.13.0".into(),
+    ///     Duration::from_secs(1),
+    /// );
+    ///
+    /// let req = AssessRequest::parse(br#"{"application_id": "APP-1", "applicant_identifier": "x",
+    ///     "product_type": "mortgage", "amount": "90000",
+    ///     "payload": {"property_address": "1 Main St", "appraised_value": "120000", "down_payment": "30000"}}"#)
+    /// .unwrap();
+    /// let outcome = client.signals(&req).await;
+    /// assert_eq!(outcome.status, JevStatus::Ok);
+    /// assert_eq!(outcome.signals.address_plausible, Some(0.97));
+    /// assert_eq!(outcome.signals.purpose_high_risk, None); // not asked for a mortgage
+    /// # }
+    /// ```
     pub async fn signals(&self, req: &AssessRequest) -> JevOutcome {
         match self.call(req).await {
             Ok(signals) => JevOutcome {
@@ -135,6 +220,7 @@ impl JevClient {
         }
     }
 
+    /// Sends one request and parses the reply into [`Signals`].
     async fn call(&self, req: &AssessRequest) -> Result<Signals, JevError> {
         let response = self
             .http
@@ -154,8 +240,43 @@ impl JevClient {
     }
 }
 
+/// Builds the System One request body for `req`.
+///
 /// Only `product_type`, `amount`, and the payload's free-text fields leave the service.
 /// `applicant_identifier` and the VIN are never sent.
+///
+/// The result is `{state, model, questions}`. `state` is a JSON-encoded string of the
+/// facts, and `questions` maps each question id to `{type, instructions, criteria?}`.
+/// `text_anomaly` is always asked; the other questions depend on the product.
+///
+/// # Examples
+///
+/// ```
+/// use loan_risk_engine::jev::build_request;
+/// use loan_risk_engine::model::{AssessRequest, Payload};
+/// use rust_decimal::Decimal;
+///
+/// let req = AssessRequest {
+///     application_id: "APP-1".into(),
+///     applicant_identifier: "secret@example.com".into(),
+///     amount: Decimal::new(32_000, 0),
+///     payload: Payload::AutoLoan {
+///         vehicle_make_model: "Toyota Yaris 2022".into(),
+///         vin: "VIN-SECRET".into(),
+///         down_payment: Decimal::new(3_000, 0),
+///     },
+/// };
+/// let body = build_request("jev-1.13.0", &req);
+/// assert_eq!(body["model"], "jev-1.13.0");
+/// assert_eq!(body["questions"]["text_anomaly"]["type"], "noul");
+/// assert_eq!(body["questions"]["vehicle_description_plausible"]["type"], "noul");
+///
+/// // `state` is a JSON string that holds only non-identifying facts.
+/// let state = body["state"].as_str().unwrap();
+/// assert!(state.contains("Toyota Yaris 2022"));
+/// assert!(!state.contains("secret@example.com"));
+/// assert!(!state.contains("VIN-SECRET"));
+/// ```
 pub fn build_request(model: &str, req: &AssessRequest) -> Value {
     let mut state = json!({
         "product_type": req.product_type().as_str(),
@@ -214,6 +335,7 @@ pub fn build_request(model: &str, req: &AssessRequest) -> Value {
     })
 }
 
+/// A yes/no question whose answer is a probability (`{"noul": p}`).
 fn noul(instructions: &str) -> Value {
     json!({"type": "noul", "instructions": instructions})
 }

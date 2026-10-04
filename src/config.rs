@@ -7,16 +7,23 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+/// Typesafe System One endpoint used when `JEV_API_URL` is unset.
 pub const DEFAULT_JEV_API_URL: &str = "https://api.typesafe.ai/v1/systemone";
 
+/// Which decision table to load (`RULES_VERSION`). Each maps to
+/// `rules/risk_tier.<version>.json`; released files are immutable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RulesVersion {
+    /// Amount-only parity with the POC's mock: `<15k` LOW, `<100k` MEDIUM, else HIGH.
     V1,
+    /// Features plus Jev signals.
     V2,
+    /// v2 plus rules F1/F2: a missing loan-to-income (personal) or LTV (mortgage) is MEDIUM.
     V3,
 }
 
 impl RulesVersion {
+    /// The `RULES_VERSION` literal (`"v1"`, ...), also used in the rules file name.
     pub fn as_str(self) -> &'static str {
         match self {
             RulesVersion::V1 => "v1",
@@ -26,16 +33,40 @@ impl RulesVersion {
     }
 
     /// v1 is amount-only parity with the mock; later versions take Jev signals.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use loan_risk_engine::config::RulesVersion;
+    ///
+    /// assert!(!RulesVersion::V1.uses_jev());
+    /// assert!(RulesVersion::V2.uses_jev());
+    /// assert!(RulesVersion::V3.uses_jev());
+    /// ```
     pub fn uses_jev(self) -> bool {
         !matches!(self, RulesVersion::V1)
     }
 }
 
 /// Keeps the Typesafe key out of `Debug` output and logs.
+///
+/// # Examples
+///
+/// ```
+/// use loan_risk_engine::config::Config;
+///
+/// let config =
+///     Config::from_lookup(|name| (name == "TYPESAFE_API_KEY").then(|| "sk-123".to_owned()))
+///         .unwrap();
+/// let key = config.typesafe_api_key.unwrap();
+/// assert_eq!(format!("{key:?}"), "Secret(***)");
+/// assert_eq!(key.expose(), "sk-123");
+/// ```
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(String);
 
 impl Secret {
+    /// The raw value. Call it only where the key is sent (the Jev `Authorization` header).
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -47,34 +78,77 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// All runtime settings. Defaults match the table in CLAUDE.md.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// `PORT` (default `8000`). Part of the contract.
     pub port: u16,
+    /// `KRAKEND_URL` (default `http://krakend:8080`), trailing `/` removed. The webhook
+    /// posts to `{krakend_url}/decisions`.
     pub krakend_url: String,
+    /// `RULES_VERSION` (default `v1`).
     pub rules_version: RulesVersion,
+    /// `RULES_DIR` (default `/app/rules`): the folder holding `risk_tier.v*.json`.
     pub rules_dir: PathBuf,
+    /// `JEV_ENABLED` (default `false`): the Jev kill switch. Accepts `true`/`1`/`false`/`0`.
     pub jev_enabled: bool,
+    /// `JEV_API_URL` (default [`DEFAULT_JEV_API_URL`]).
     pub jev_api_url: String,
+    /// `TYPESAFE_API_KEY`. Required when `jev_enabled`; never logged.
     pub typesafe_api_key: Option<Secret>,
+    /// `JEV_MODEL` (default `jev-1.13.0`): the pinned exact model version.
     pub jev_model: String,
+    /// `JEV_TIMEOUT_MS` (default `2000`): the timeout of the single Jev attempt.
     pub jev_timeout: Duration,
+    /// `ASSESS_DEADLINE_MS` (default `4000`): the budget for the decide stage. Past it
+    /// the decision is MEDIUM (`R-DEADLINE`). Must stay under the adapter's 5s timeout.
     pub assess_deadline: Duration,
+    /// `SIMULATED_DELAY_SECONDS` (default `0`, fractions allowed): demo sleep before
+    /// deciding. Counts against `assess_deadline`.
     pub simulated_delay: Duration,
 }
 
+/// Why startup refused the environment.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ConfigError {
+    /// `var` is set to a value that does not parse (or is out of range).
     #[error("{var}: invalid value {value:?}")]
     Invalid { var: &'static str, value: String },
+    /// `JEV_ENABLED=true` without a `TYPESAFE_API_KEY`.
     #[error("JEV_ENABLED=true requires TYPESAFE_API_KEY")]
     MissingApiKey,
 }
 
 impl Config {
+    /// Reads the process environment.
     pub fn from_env() -> Result<Self, ConfigError> {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
+    /// Builds a config from any name→value lookup, so tests need not touch the real
+    /// environment. Values are trimmed, and an empty value counts as unset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use loan_risk_engine::config::{Config, ConfigError, RulesVersion};
+    ///
+    /// let env = |name: &str| match name {
+    ///     "RULES_VERSION" => Some("v2".to_owned()),
+    ///     "ASSESS_DEADLINE_MS" => Some("3000".to_owned()),
+    ///     _ => None,
+    /// };
+    /// let config = Config::from_lookup(env).unwrap();
+    /// assert_eq!(config.rules_version, RulesVersion::V2);
+    /// assert_eq!(config.assess_deadline, Duration::from_millis(3000));
+    /// assert_eq!(config.port, 8000); // unset, so the default
+    ///
+    /// // Jev on without a key is refused at startup.
+    /// let env = |name: &str| (name == "JEV_ENABLED").then(|| "true".to_owned());
+    /// assert_eq!(Config::from_lookup(env).unwrap_err(), ConfigError::MissingApiKey);
+    /// ```
     pub fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, ConfigError> {
         let get = |name: &str| {
             lookup(name)
@@ -125,6 +199,7 @@ impl Config {
     }
 }
 
+/// Parses `var` with `FromStr`, or returns `default` when it is unset.
 fn parse<T: FromStr>(
     get: &impl Fn(&str) -> Option<String>,
     var: &'static str,
@@ -136,6 +211,7 @@ fn parse<T: FromStr>(
     }
 }
 
+/// Shorthand for [`ConfigError::Invalid`].
 fn invalid(var: &'static str, value: &str) -> ConfigError {
     ConfigError::Invalid {
         var,

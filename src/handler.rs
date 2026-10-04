@@ -19,6 +19,7 @@ use crate::model::{
 use crate::rules;
 use crate::webhook;
 
+/// `GET /healthz`: reports which rules are loaded and whether Jev is on. Always 200.
 pub async fn healthz(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
         "rules_version": state.rules.label(),
@@ -28,6 +29,58 @@ pub async fn healthz(State(state): State<AppState>) -> Json<Value> {
 }
 
 /// Always answers 202, and only after the decision webhook has been attempted.
+///
+/// Flow: parse the body, run `decide` under `ASSESS_DEADLINE_MS`, post the tier to
+/// `/decisions`, then emit one audit line. Invalid input and an overrun deadline both
+/// still post a MEDIUM decision. Only a body with no readable `application_id` skips the
+/// webhook, since there is nothing to route it to.
+///
+/// # Examples
+///
+/// ```
+/// use axum::body::Body;
+/// use axum::http::{Request, StatusCode};
+/// use loan_risk_engine::config::Config;
+/// use loan_risk_engine::rules::Rules;
+/// use loan_risk_engine::{AppState, build_router};
+/// use serde_json::json;
+/// use tower::ServiceExt;
+/// use wiremock::matchers::{body_json, path};
+/// use wiremock::{Mock, MockServer, ResponseTemplate};
+///
+/// # #[tokio::main]
+/// # async fn main() {
+/// let krakend = MockServer::start().await;
+/// Mock::given(path("/decisions"))
+///     .and(body_json(json!({"application_id": "APP-1", "risk_tier": "MEDIUM"})))
+///     .respond_with(ResponseTemplate::new(202))
+///     .expect(1)
+///     .mount(&krakend)
+///     .await;
+///
+/// let rules_dir = format!("{}/rules", env!("CARGO_MANIFEST_DIR"));
+/// let config = Config::from_lookup(|name| match name {
+///     "KRAKEND_URL" => Some(krakend.uri()),
+///     "RULES_DIR" => Some(rules_dir.clone()),
+///     _ => None,
+/// })
+/// .unwrap();
+/// let rules = Rules::load(&config.rules_dir, config.rules_version).unwrap();
+///
+/// // `amount` is not a number: still 202, and the webhook gets MEDIUM (R-INVALID-INPUT).
+/// let body = r#"{"application_id": "APP-1", "applicant_identifier": "x",
+///     "product_type": "personal_loan", "amount": "lots", "payload": {}}"#;
+/// let request = Request::post("/assess")
+///     .header("content-type", "application/json")
+///     .body(Body::from(body))
+///     .unwrap();
+/// let response = build_router(AppState::new(config, rules))
+///     .oneshot(request)
+///     .await
+///     .unwrap();
+/// assert_eq!(response.status(), StatusCode::ACCEPTED);
+/// # }
+/// ```
 pub async fn assess(State(state): State<AppState>, body: Bytes) -> StatusCode {
     let started = Instant::now();
 
@@ -102,11 +155,17 @@ pub async fn assess(State(state): State<AppState>, body: Bytes) -> StatusCode {
     StatusCode::ACCEPTED
 }
 
+/// Everything the decide stage produced, kept for the audit line.
 struct Assessment {
+    /// The final decision posted to the webhook.
     decision: Decision,
+    /// `None` when the decision was a fallback made before features were computed.
     features: Option<Features>,
+    /// Jev status and signals (`skipped` for v1 and for fallbacks).
     jev: JevOutcome,
+    /// Time spent in the Jev step, in milliseconds.
     jev_ms: u128,
+    /// Time spent evaluating the rules, in milliseconds.
     rules_ms: u128,
 }
 
@@ -123,6 +182,11 @@ impl Assessment {
     }
 }
 
+/// The decide stage: optional simulated delay → features → Jev → rules.
+///
+/// Jev is called only when the rules version uses it. If the rules need Jev but it is
+/// disabled, the outcome is `unavailable`, which the rules turn into MEDIUM instead of LOW
+/// (I3). A rules error falls back to MEDIUM (`R-RULES-ERROR`). Never fails.
 async fn decide(state: &AppState, req: &AssessRequest) -> Assessment {
     if !state.config.simulated_delay.is_zero() {
         tokio::time::sleep(state.config.simulated_delay).await;
@@ -156,10 +220,14 @@ async fn decide(state: &AppState, req: &AssessRequest) -> Assessment {
     }
 }
 
+/// Per-step timings in milliseconds for the audit line.
 #[derive(Debug, Serialize)]
 struct LatencyMs {
+    /// The Jev step (0 when skipped or for a fallback).
     jev: u128,
+    /// Rules evaluation (0 for a fallback).
     rules: u128,
+    /// Whole request, from receipt to after the webhook call.
     total: u128,
 }
 
@@ -168,20 +236,26 @@ struct LatencyMs {
 #[derive(Debug, Serialize)]
 struct AuditRecord<'a> {
     application_id: &'a str,
+    /// `None` when the body could not be parsed.
     product_type: Option<&'static str>,
+    /// Flattened into `risk_tier`, `rule_id`, and `reason`.
     #[serde(flatten)]
     decision: &'a Decision,
+    /// e.g. `risk_tier@v2`.
     rules_version: &'a str,
     rules_sha256: &'a str,
     jev_status: JevStatus,
+    /// The configured `JEV_MODEL`, logged even when Jev was skipped.
     jev_model: &'a str,
     signals: &'a Signals,
     features: Option<&'a Features>,
     latency_ms: LatencyMs,
+    /// HTTP status from `/decisions`; `None` on a transport error.
     webhook_status: Option<u16>,
 }
 
 impl AuditRecord<'_> {
+    /// Writes the record as one `info` event on target `risk_engine::decision`.
     fn emit(&self) {
         // tracing fields cannot hold nested objects, so the nested parts are JSON strings.
         tracing::info!(

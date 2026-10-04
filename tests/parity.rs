@@ -10,6 +10,7 @@ use loan_risk_engine::model::{AssessRequest, RiskTier};
 use loan_risk_engine::rules::{self, Rules};
 use serde_json::json;
 
+/// `(amount, expected tier)` pairs from the mock's own tests.
 const MOCK_BOUNDARY_TABLE: [(&str, RiskTier); 8] = [
     ("1", RiskTier::Low),
     ("14999.99", RiskTier::Low),
@@ -21,6 +22,7 @@ const MOCK_BOUNDARY_TABLE: [(&str, RiskTier); 8] = [
     ("150000", RiskTier::High),
 ];
 
+/// One valid request per product type for `amount`, so v1 is shown to ignore the product.
 fn requests(amount: &str) -> Vec<AssessRequest> {
     [
         json!({"product_type": "personal_loan", "payload": {"purpose": "p", "employment_status": "e", "monthly_income": "1"}}),
