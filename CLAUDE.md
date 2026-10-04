@@ -159,7 +159,7 @@ CI runs: fmt, clippy (`-D warnings`), and test. No Typesafe key is ever needed i
 | `RULES_DIR` | `/app/rules` | |
 | `JEV_ENABLED` | `false` | kill switch |
 | `JEV_API_URL` | `https://api.typesafe.ai/v1/systemone` | Typesafe System One endpoint |
-| `TYPESAFE_API_KEY` | — | secret; `.env` only, never commit or log it. Required when `JEV_ENABLED=true` (startup fails without it) |
+| `TYPESAFE_API_KEY` | — | secret; never commit or log it. Required when `JEV_ENABLED=true` (startup fails without it). On the owner's machine it lives in `~/.hermes/.env`; see "Recreating the container" |
 | `JEV_MODEL` | `jev-1.13.0` | **pinned** exact version; upgrading is a deliberate change |
 | `JEV_TIMEOUT_MS` | `2000` | |
 | `ASSESS_DEADLINE_MS` | `4000` | keep below the `risk-adapter`'s 5s HTTP timeout |
@@ -180,6 +180,18 @@ This service runs as its **own standalone container**, started from this repo's 
 | this service → POC KrakenD | `http://host.docker.internal:8090/decisions` | `KRAKEND_URL` default in this repo's `docker-compose.yml` |
 
 - Start it with `docker compose up -d --build` here; the POC stack is started separately. Host port 18000 (`RISK_ENGINE_HOST_PORT`) is used because the POC publishes Mayan on 8000.
+- **Building the image next to the running POC stack can run the Docker VM out of memory** (7.7 GiB on the owner's machine). On 2026-10-04 it killed the POC's Keycloak (`docker compose up -d keycloak` in the POC brings it back). Prefer `--no-build` when only the config changes, and build with the POC stopped.
+
+**Recreating the container without losing the Jev key.** There is no `.env` in this repo, and the compose file defaults the key to empty (`${TYPESAFE_API_KEY:-}`). So any `docker compose up` that does not pass the key yields a container with no key. With `JEV_ENABLED=true` it then fails at startup and restart-loops; with `JEV_ENABLED=false`, Jev is off and under v2/v3 nothing is auto-approved. The key is lost for good once the old container is replaced, unless it is passed again. That happened on 2026-10-04. Pass it on every recreate, reading only that one line from `~/.hermes/.env`:
+
+```bash
+KEY=$(sed -nE 's/^[[:space:]]*(export[[:space:]]+)?TYPESAFE_API_KEY=//p' ~/.hermes/.env | tail -1 | sed -E "s/^['\"]//; s/['\"][[:space:]]*$//")
+RULES_VERSION=v3 JEV_ENABLED=true TYPESAFE_API_KEY="$KEY" docker compose up -d --no-build; unset KEY
+```
+
+- Never `source` or `--env-file` `~/.hermes/.env`: it also holds unrelated secrets.
+- Never print the value. To check the running container, mask it: `docker inspect loan-risk-engine-risk-engine-1 --format '{{range .Config.Env}}{{println .}}{{end}}' | sed -E 's/^(TYPESAFE_API_KEY=).+/\1<set>/'`.
+- Test that the key works with a throwaway container of the same image (`docker run --rm -p 18099:8000 ... -e KRAKEND_URL=http://127.0.0.1:9`), so a test decision never reaches the POC's KrakenD. A good key logs `jev_status=ok`.
 - If this container is not running, `/assess` fails at KrakenD and applications wait in `PENDING_RISK_ASSESSMENT`.
 - The POC keeps `mock-risk-engine` behind `profiles: ["mock"]`. **Rollback:** set the `/assess` host in the POC's `krakend.json` back to `http://mock-risk-engine:8000`, run `docker compose --profile mock up -d` there, and restart `krakend`.
 
