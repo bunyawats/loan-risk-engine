@@ -280,7 +280,8 @@ fn string(value: Option<&Value>, name: &'static str) -> Result<String, InvalidIn
 }
 
 /// The contract sends decimals as strings; JSON numbers are tolerated via their text form,
-/// never through `f64`.
+/// never through `f64`. That relies on serde_json's `arbitrary_precision` feature, which
+/// makes a `Number` keep its original digits.
 fn decimal(value: Option<&Value>, name: &'static str) -> Result<Decimal, InvalidInput> {
     let text = match value {
         Some(Value::String(s)) => s.trim().to_owned(),
@@ -336,6 +337,17 @@ mod tests {
         assert_eq!(
             parse(&v).unwrap().amount,
             Decimal::from_str("60000.5").unwrap()
+        );
+    }
+
+    #[test]
+    fn numeric_decimals_keep_every_digit() {
+        let body = personal()
+            .to_string()
+            .replace(r#""60000.00""#, "12345678901234567.89");
+        assert_eq!(
+            AssessRequest::parse(body.as_bytes()).unwrap().amount,
+            Decimal::from_str("12345678901234567.89").unwrap()
         );
     }
 
