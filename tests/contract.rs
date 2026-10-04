@@ -125,8 +125,17 @@ async fn invalid_input_decides_medium() {
     let mut missing_payload_field = personal("5000");
     missing_payload_field["payload"] = json!({"purpose": "x"});
     bad_amount["payload"] = json!({});
+    // under v1 these would otherwise match `amount < 15000` and be auto-approved
+    let negative_amount = personal("-5000");
+    let zero_amount = personal("0");
 
-    for body in [bad_amount, unknown_product, missing_payload_field] {
+    for body in [
+        bad_amount,
+        unknown_product,
+        missing_payload_field,
+        negative_amount,
+        zero_amount,
+    ] {
         let krakend = krakend_expecting("MEDIUM").await;
         let (status, _) =
             post_assess(app(&[("KRAKEND_URL", &krakend.uri())]), body.to_string()).await;

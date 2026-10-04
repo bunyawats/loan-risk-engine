@@ -158,6 +158,10 @@ pub enum InvalidInput {
     /// `product_type` is not one of the three known products.
     #[error("unknown product_type")]
     UnknownProductType,
+    /// `amount` is zero or negative. Without this check the rules would read it as a
+    /// small loan and could auto-approve it.
+    #[error("amount must be positive")]
+    NonPositiveAmount,
 }
 
 /// First pass over the body: every field is optional and untyped, so a missing or
@@ -204,6 +208,9 @@ impl AssessRequest {
         let applicant_identifier =
             string(raw.applicant_identifier.as_ref(), "applicant_identifier")?;
         let amount = decimal(raw.amount.as_ref(), "amount")?;
+        if amount <= Decimal::ZERO {
+            return Err(InvalidInput::NonPositiveAmount);
+        }
         let product_type = string(raw.product_type.as_ref(), "product_type")?;
         let p = raw.payload.as_ref();
         let payload = match product_type.as_str() {
@@ -330,6 +337,18 @@ mod tests {
             parse(&v).unwrap().amount,
             Decimal::from_str("60000.5").unwrap()
         );
+    }
+
+    #[test]
+    fn rejects_zero_and_negative_amounts() {
+        for amount in ["0", "0.00", "-0.01", "-5000"] {
+            let mut v = personal();
+            v["amount"] = json!(amount);
+            assert_eq!(parse(&v), Err(InvalidInput::NonPositiveAmount), "{amount}");
+        }
+        let mut v = personal();
+        v["amount"] = json!("0.01");
+        assert!(parse(&v).is_ok());
     }
 
     #[test]

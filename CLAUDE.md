@@ -53,7 +53,7 @@ The POC's `risk-adapter` calls this service through **KrakenD**, and this servic
   - `auto_loan`: `vehicle_make_model`, `vin`, `down_payment`
   - `mortgage`: `property_address`, `appraised_value`, `down_payment`
 - If the decide stage overruns the deadline, the decision is `MEDIUM` (rule `R-DEADLINE`) and the webhook is still posted (2s timeout of its own).
-- Invalid or unparsable input is **not** a 4xx. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck. This is a deliberate difference from the mock, which answers a bad `amount` with a 500 and never sends a decision. The one exception: a body with no readable `application_id` cannot be routed anywhere, so it gets a `warn` log and a 202 with no webhook call.
+- Invalid or unparsable input is **not** a 4xx. A zero or negative `amount` counts as invalid; otherwise the rules would read it as a small loan and could auto-approve it. Decide `MEDIUM` (rule `R-INVALID-INPUT`) and still return 202, so the application reaches a human instead of getting stuck. This is a deliberate difference from the mock, which answers a bad `amount` with a 500 and never sends a decision. The one exception: a body with no readable `application_id` cannot be routed anywhere, so it gets a `warn` log and a 202 with no webhook call.
 
 ### Outbound: `POST {KRAKEND_URL}/decisions`
 
